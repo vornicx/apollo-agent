@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { APOLLO_DIR, DEFAULT_CONFIG, VALID_MODES } from "./constants.mjs";
 import { openApolloDb, newId, nowIso, updateMission } from "./db.mjs";
 import {
@@ -25,8 +27,14 @@ import {
 import { runAllowedCommand } from "./commands.mjs";
 
 export async function main(argv) {
+  if (argv.length === 0) return shellCommand();
+  return dispatch(argv);
+}
+
+async function dispatch(argv) {
   const command = argv[0] ?? "help";
   if (command === "help" || command === "--help" || command === "-h") return help();
+  if (command === "shell") return shellCommand();
   if (command === "init") return initCommand();
   if (command === "doctor") return doctorCommand();
   if (command === "keys" && argv[1] === "check") return keysCheckCommand();
@@ -37,6 +45,35 @@ export async function main(argv) {
   if (command === "resume") return resumeCommand(argv[1]);
   if (command === "config") return configCommand(argv.slice(1));
   throw new Error(`Unknown command: ${command}. Run "apollo help".`);
+}
+
+async function shellCommand() {
+  printBanner();
+  const rl = createInterface({ input, output, prompt: "apollo> " });
+  rl.prompt();
+  for await (const rawLine of rl) {
+    const line = rawLine.trim();
+    if (!line) {
+      rl.prompt();
+      continue;
+    }
+    if (["exit", "quit", ":q"].includes(line.toLowerCase())) {
+      break;
+    }
+    if (line.toLowerCase() === "clear") {
+      console.clear();
+      printBanner();
+      rl.prompt();
+      continue;
+    }
+    try {
+      await dispatch(parseShellLine(line));
+    } catch (error) {
+      console.error(`Apollo: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    rl.prompt();
+  }
+  rl.close();
 }
 
 function initCommand() {
@@ -416,6 +453,56 @@ function parseRunArgs(args) {
   return { goal, ...flags };
 }
 
+function parseShellLine(line) {
+  const args = tokenize(line);
+  if (args.length === 0) return ["help"];
+  const command = args[0];
+  const knownCommands = new Set([
+    "help",
+    "--help",
+    "-h",
+    "init",
+    "doctor",
+    "keys",
+    "status",
+    "run",
+    "diff",
+    "rollback",
+    "resume",
+    "config",
+    "shell",
+  ]);
+  if (knownCommands.has(command)) return args;
+  return ["run", line];
+}
+
+function tokenize(line) {
+  const tokens = [];
+  let current = "";
+  let quote = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if ((char === '"' || char === "'") && !quote) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (/\s/.test(char) && !quote) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
 function printMissionSummary(missionId, estimate, cost, applyResult, learned) {
   console.log("");
   console.log(`Apollo Mission ${missionId}`);
@@ -438,6 +525,8 @@ function help() {
   console.log(`Apollo CLI
 
 Commands:
+  apollo                         open interactive Apollo shell
+  apollo shell                   open interactive Apollo shell
   apollo init
   apollo run "goal" --mode plan|review|auto|full-auto
   apollo status
@@ -448,5 +537,21 @@ Commands:
   apollo keys check
   apollo config
   apollo config set <key> <value>
+`);
+}
+
+function printBanner() {
+  console.log(`APOLLO CLI
+Local-first mission control
+
+Type a command, or type any goal to run it as a mission.
+Examples:
+  init
+  run "summarize this repo" --mode plan
+  status
+  diff
+  rollback
+  doctor
+  exit
 `);
 }

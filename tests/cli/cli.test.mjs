@@ -34,6 +34,19 @@ test("apollo run --mode plan records a mission without modifying workspace files
   assert.match(status.stdout, /completed/);
 });
 
+test("apollo without args opens the interactive shell", () => {
+  const cwd = tempWorkspace();
+  const result = spawnSync(process.execPath, [bin], {
+    cwd,
+    input: "exit\n",
+    encoding: "utf8",
+    env: { ...process.env, OPENROUTER_API_KEY: "", GROQ_API_KEY: "" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /APOLLO CLI/);
+  assert.match(result.stdout, /apollo>/);
+});
+
 test("checkpoint rollback restores touched files", () => {
   const cwd = tempWorkspace();
   writeFileSync(join(cwd, "file.txt"), "before\n", "utf8");

@@ -35,6 +35,22 @@ Fill `.env` with your Supabase and AI provider credentials.
 Apollo also ships a local-first CLI runtime for project missions:
 
 ```bash
+npm link
+apollo
+```
+
+Inside the interactive shell:
+
+```txt
+apollo> init
+apollo> run "summarize this repo" --mode plan
+apollo> status
+apollo> exit
+```
+
+Direct commands also work:
+
+```bash
 npx apollo-agent init
 npx apollo-agent run "summarize this repo" --mode plan
 npx apollo-agent run "implement the smallest safe improvement" --mode review
