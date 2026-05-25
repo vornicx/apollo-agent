@@ -24,8 +24,12 @@ import {
   plannerAgent,
   reflection,
   reviewerAgent,
+  skillCreatorAgent,
+  skillDiscoveryAgent,
 } from "./agents.mjs";
+import { searchAll } from "./github-search.mjs";
 import { pickMode } from "./picker.mjs";
+import { formatSkillsContext, installSkillCode, listSkills, runSkill } from "./skills.mjs";
 import { runAllowedCommand } from "./commands.mjs";
 import {
   Spinner,
@@ -314,6 +318,69 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
     return;
   }
 
+  // ── Skill discovery & acquisition ─────────────────────────────────────────
+  const existingSkills = listSkills(workspace);
+  let acquiredSkills = [...existingSkills];
+  let hasSkills = false;
+
+  if (estimate.complexity !== "simple") {
+    printPipeline("skills", { hasSkills: true });
+    updateMission(db, missionId, { status: "acquiring_skills" });
+
+    const discoverySpinner = new Spinner("Analyzing skill requirements...").start();
+    const discovery = await skillDiscoveryAgent({
+      goal, plan, existingSkills,
+      provider: config.provider, model: config.model,
+    });
+    discoverySpinner.stop(
+      discovery.parsed.needed.length
+        ? `${discovery.parsed.needed.length} skill(s) needed`
+        : "No new skills needed",
+    );
+
+    for (const needed of discovery.parsed.needed) {
+      hasSkills = true;
+      const searchSpinner = new Spinner(`Searching: ${needed.name}...`).start();
+      const searchResults = await searchAll(needed);
+      searchSpinner.stop(`${searchResults.length} source(s) found`);
+
+      const skillBox = new StreamingBox(
+        `◆ SKILL CREATOR  ·  ${needed.name}`,
+        { colorFn: clr.magenta },
+      );
+      const skillSpinner = new Spinner(`Creating skill: ${needed.name}...`).start();
+      let skillStarted = false;
+
+      const created = await skillCreatorAgent({
+        name: needed.name,
+        description: needed.description,
+        why: needed.why,
+        searchResults,
+        provider: config.provider,
+        model: config.model,
+        onToken: (t) => {
+          if (!skillStarted) { skillSpinner.stop(); skillBox.open(); skillStarted = true; }
+          skillBox.write(clr.dim(t));
+        },
+      });
+      if (!skillStarted) { skillSpinner.stop(); skillBox.open(); }
+
+      const skillPath = await installSkillCode(
+        workspace, needed.name, created.parsed.code, created.parsed.meta,
+      );
+      skillBox.close(`saved → ${skillPath}`);
+      acquiredSkills.push({ name: needed.name, path: skillPath, meta: created.parsed.meta });
+
+      recordEvent(db, workspace, missionId, {
+        type: "skill_acquired",
+        message: `Skill "${needed.name}" created and installed`,
+        metadata: { name: needed.name, path: skillPath, searchResults: searchResults.length },
+      });
+    }
+  }
+
+  const skillsContext = formatSkillsContext(acquiredSkills);
+
   // ── Iteration loop ────────────────────────────────────────────────────────
   const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let feedback = null;
@@ -327,7 +394,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
 
     // Re-plan with feedback (iteration > 1)
     if (iteration > 1) {
-      printPipeline("plan");
+      printPipeline("plan", { hasSkills: hasSkills || acquiredSkills.length > 0 });
       updateMission(db, missionId, { status: "planning" });
       const replanBox = new StreamingBox(
         `◆ PLANNER  ·  iteration ${iteration}/${maxIterations}  ·  replanning`,
@@ -355,7 +422,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
     }
 
     // Implement
-    printPipeline("implement");
+    printPipeline("implement", { hasSkills: hasSkills || acquiredSkills.length > 0 });
     updateMission(db, missionId, { status: "executing" });
     const implBox = new StreamingBox(
       `◆ IMPLEMENTER  ·  iteration ${iteration}/${maxIterations}`,
@@ -363,8 +430,8 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
     );
     const implSpinner = new Spinner("Waiting for implementer...").start();
     let implStarted = false;
-    const implementer = await implementerAgent({
-      goal, plan, files,
+    let implementer = await implementerAgent({
+      goal, plan, files, skillsContext,
       provider: config.provider, model: config.model,
       onToken: (t) => {
         if (!implStarted) { implSpinner.stop(); implBox.open(); implStarted = true; }
@@ -372,6 +439,39 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
       },
     });
     if (!implStarted) { implSpinner.stop(); implBox.open(); }
+
+    // Execute skill_calls if the implementer requested them
+    if (implementer.parsed.skill_calls.length > 0) {
+      implBox.write(`\n[running ${implementer.parsed.skill_calls.length} skill(s)...]`);
+      const skillResults = {};
+      for (const call of implementer.parsed.skill_calls) {
+        try {
+          skillResults[call.skill] = await runSkill(workspace, call.skill, call.inputs ?? {});
+          implBox.write(`\n  ✓ ${call.skill}`);
+        } catch (err) {
+          skillResults[call.skill] = { error: err.message };
+          implBox.write(`\n  ✗ ${call.skill}: ${err.message}`);
+        }
+      }
+      implBox.write("\n[re-implementing with skill results...]");
+      // Re-run implementer with results — bounded to one extra call
+      const implBox2 = new StreamingBox(
+        `◆ IMPLEMENTER  ·  iteration ${iteration}/${maxIterations}  ·  with skill data`,
+        { colorFn: clr.green },
+      );
+      let impl2Started = false;
+      implementer = await implementerAgent({
+        goal, plan, files, skillsContext, skillResults,
+        provider: config.provider, model: config.model,
+        onToken: (t) => {
+          if (!impl2Started) { implBox2.open(); impl2Started = true; }
+          implBox2.write(clr.dim(t));
+        },
+      });
+      if (!impl2Started) implBox2.open();
+      implBox2.close(`${implementer.parsed.files.length} file(s) · ${implementer.latencyMs}ms`);
+    }
+
     const fCount = implementer.parsed.files.length;
     implBox.close(
       `${fCount} file(s) · conf ${Math.round(implementer.parsed.confidence * 100)}% · ${implementer.latencyMs}ms`,
@@ -400,7 +500,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
     }
 
     // Review
-    printPipeline("review");
+    printPipeline("review", { hasSkills: hasSkills || acquiredSkills.length > 0 });
     updateMission(db, missionId, { status: "reviewing" });
     const reviewBox = new StreamingBox(
       `◆ REVIEWER  ·  iteration ${iteration}/${maxIterations}`,
@@ -461,7 +561,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
     return;
   }
 
-  printPipeline("apply");
+  printPipeline("apply", { hasSkills: hasSkills || acquiredSkills.length > 0 });
 
   let applyResult = { applied: 0, blocked: 0 };
 

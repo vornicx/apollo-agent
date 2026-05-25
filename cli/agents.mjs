@@ -79,7 +79,11 @@ export async function plannerAgent({ goal, estimate, files, projectDoc, provider
   return result;
 }
 
-export async function implementerAgent({ goal, plan, files, provider, model, onToken }) {
+export async function implementerAgent({ goal, plan, files, skillsContext = "", skillResults = null, provider, model, onToken }) {
+  const skillResultsBlock = skillResults
+    ? `\n## Skill execution results\n${JSON.stringify(skillResults, null, 2)}\nUse these results in your implementation.`
+    : "";
+
   const result = await callModel({
     provider,
     model,
@@ -95,11 +99,14 @@ Return ONLY valid JSON matching this shape:
   "summary": "short summary",
   "files": [{"path": "relative/path", "content": "complete new file content"}],
   "commands": ["optional safe validation commands"],
-  "confidence": 0.0
+  "confidence": 0.0,
+  "skill_calls": [{"skill": "skill-name", "inputs": {}, "reason": "why"}]
 }
 
 Only include files that must change. Use complete file contents, not partial patches.
-Never include .env, .git, node_modules, dist, build output, or secret files.`,
+Never include .env, .git, node_modules, dist, build output, or secret files.
+Include skill_calls only if you genuinely need external data before you can write the files.
+${skillsContext}`,
       },
       {
         role: "user",
@@ -109,6 +116,7 @@ Never include .env, .git, node_modules, dist, build output, or secret files.`,
           `Plan:\n${plan}`,
           "",
           `Workspace files:\n${files.slice(0, 80).join("\n")}`,
+          skillResultsBlock,
         ].join("\n"),
       },
     ],
@@ -121,6 +129,130 @@ Never include .env, .git, node_modules, dist, build output, or secret files.`,
       files: Array.isArray(parsed.files) ? parsed.files : [],
       commands: Array.isArray(parsed.commands) ? parsed.commands : [],
       confidence: Number(parsed.confidence ?? 0.72),
+      skill_calls: Array.isArray(parsed.skill_calls) ? parsed.skill_calls : [],
+    },
+  };
+}
+
+// ── Skill agents ──────────────────────────────────────────────────────────────
+
+export async function skillDiscoveryAgent({ goal, plan, existingSkills, provider, model }) {
+  const existing = existingSkills.length
+    ? `\nAlready installed skills:\n${existingSkills.map((s) => `- ${s.name}: ${s.meta?.description ?? ""}`).join("\n")}`
+    : "\nNo skills installed yet.";
+
+  const result = await callModel({
+    provider,
+    model,
+    messages: [
+      {
+        role: "system",
+        content: `${CONSTITUTION}
+
+You are Apollo Skill Analyst.
+Analyze the goal and plan to identify external capabilities that would help implement it.
+Return ONLY valid JSON:
+{
+  "needed": [
+    {
+      "name": "kebab-case-name",
+      "description": "what this skill does",
+      "why": "why it's needed for this specific task",
+      "githubQuery": "search term for GitHub",
+      "npmQuery": "search term for npm"
+    }
+  ],
+  "reasoning": "brief explanation"
+}
+
+Rules:
+- Only identify skills genuinely needed and NOT already installed
+- Prefer zero skills when file edits alone can accomplish the goal
+- A skill is needed when: fetching external data, calling external APIs, running specialized transforms, or generating content that requires real-time external information
+- Max 3 skills per mission`,
+      },
+      {
+        role: "user",
+        content: [`Goal: ${goal}`, `Plan:\n${plan.slice(0, 3000)}`, existing].join("\n"),
+      },
+    ],
+  });
+
+  let parsed = {};
+  try {
+    parsed = JSON.parse(extractJson(result.content));
+  } catch { /* empty */ }
+
+  return {
+    ...result,
+    parsed: {
+      needed: Array.isArray(parsed.needed) ? parsed.needed.slice(0, 3) : [],
+      reasoning: String(parsed.reasoning ?? ""),
+    },
+  };
+}
+
+export async function skillCreatorAgent({ name, description, why, searchResults, provider, model, onToken }) {
+  const searchCtx = searchResults.length
+    ? `\nReference implementations found (use for inspiration, do NOT copy verbatim):\n${searchResults
+        .slice(0, 4)
+        .map((r) => `- ${r.name} (${r.source}, ${r.stars ?? ""}★): ${r.description}`)
+        .join("\n")}`
+    : "\nNo reference implementations found. Build from scratch using Node.js built-ins and fetch.";
+
+  const result = await callModel({
+    provider,
+    model,
+    onToken,
+    messages: [
+      {
+        role: "system",
+        content: `${CONSTITUTION}
+
+You are Apollo Skill Creator.
+Write a complete Node.js ESM skill module. Return ONLY valid JSON:
+{
+  "code": "// complete ESM module\\n...",
+  "meta": {
+    "name": "skill-name",
+    "description": "what it does",
+    "inputs": { "paramName": "description" },
+    "outputs": { "fieldName": "description" }
+  }
+}
+
+The module MUST export:
+  export const meta = { name, description, inputs, outputs };
+  export async function run(inputs, context) { ... return { ...outputs }; }
+
+Constraints:
+- Use only Node.js built-ins (fs, path, crypto, child_process) and global fetch
+- No npm package imports
+- Handle errors gracefully, return { error: "..." } on failure
+- Add timeouts to fetch calls using AbortSignal.timeout()`,
+      },
+      {
+        role: "user",
+        content: [
+          `Skill name: ${name}`,
+          `Description: ${description}`,
+          `Why needed: ${why}`,
+          searchCtx,
+        ].join("\n"),
+      },
+    ],
+  });
+
+  let parsed = {};
+  try {
+    parsed = JSON.parse(extractJson(result.content));
+  } catch { /* empty */ }
+
+  return {
+    ...result,
+    parsed: {
+      code: String(parsed.code ?? `export const meta = { name: "${name}", description: "${description}", inputs: {}, outputs: {} };\nexport async function run(inputs) { return {}; }`),
+      meta: parsed.meta ?? { name, description, inputs: {}, outputs: {} },
     },
   };
 }

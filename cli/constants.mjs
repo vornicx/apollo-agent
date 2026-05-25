@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG = {
   maxEstimatedCost: 0.25,
   allowNetworkCommands: false,
   allowDestructiveCommands: false,
+  allowAutoSkills: true,
 };
 
 export const DEFAULT_IGNORE = [

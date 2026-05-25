@@ -89,18 +89,22 @@ export class StreamingBox {
 // ── Pipeline Rail ─────────────────────────────────────────────────────────────
 // Shows the mission phase progress inline:  ✓ PLAN ──── ● IMPLEMENT ──── ○ REVIEW ──── ○ APPLY
 
-const PHASE_ORDER = ["plan", "implement", "review", "apply"];
-const PHASE_LABEL = { plan: "PLAN", implement: "IMPLEMENT", review: "REVIEW", apply: "APPLY" };
+const FULL_PHASES = ["plan", "skills", "implement", "review", "apply"];
+const SIMPLE_PHASES = ["plan", "implement", "review", "apply"];
+const PHASE_LABEL = {
+  plan: "PLAN", skills: "SKILLS", implement: "IMPLEMENT", review: "REVIEW", apply: "APPLY",
+};
 
-export function printPipeline(current) {
-  const currentIdx = PHASE_ORDER.indexOf(current);
+export function printPipeline(current, { hasSkills = true } = {}) {
+  const order = hasSkills ? FULL_PHASES : SIMPLE_PHASES;
+  const currentIdx = order.indexOf(current);
   const parts = [];
-  for (let i = 0; i < PHASE_ORDER.length; i++) {
-    const label = PHASE_LABEL[PHASE_ORDER[i]];
+  for (let i = 0; i < order.length; i++) {
+    const label = PHASE_LABEL[order[i]];
     if (i < currentIdx) parts.push(clr.green(`✓ ${label}`));
     else if (i === currentIdx) parts.push(clr.cyan(clr.bold(`● ${label}`)));
     else parts.push(clr.dim(`○ ${label}`));
-    if (i < PHASE_ORDER.length - 1) {
+    if (i < order.length - 1) {
       parts.push(i < currentIdx ? clr.green("  ───  ") : clr.dim("  ───  "));
     }
   }
