@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { Database } from "@/integrations/supabase/types";
+import type { MissionEstimate } from "@/lib/mission-routing";
 import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
-import { estimateMission } from "@/lib/mission-routing";
+import { estimateMissionSemantic } from "@/lib/mission-routing";
 import { callProviderStream, getServerProviderKey, makeSSEParser } from "@/lib/ai-providers";
 
 const bodySchema = z.object({
@@ -57,7 +58,13 @@ export const Route = createFileRoute("/api/missions/stream")({
               : personaId === "implementer"
                 ? "implement"
                 : "review";
-          const userPrompt = buildPhasePrompt(personaId, mission.goal, priorPhases ?? []);
+
+          // ── ROUTER SEMÁNTICO (reemplaza estimateMission síncrono) ──────────
+          const groqKey = process.env.GROQ_API_KEY ?? "";
+          const estimate = await estimateMissionSemantic(mission.goal, groqKey);
+          // ──────────────────────────────────────────────────────────────────
+
+          const userPrompt = buildPhasePrompt(personaId, mission.goal, priorPhases ?? [], estimate);
 
           const recalledMems = await recallForUser(
             supabase,
@@ -198,6 +205,9 @@ export const Route = createFileRoute("/api/missions/stream")({
               "Cache-Control": "no-cache, no-transform",
               "X-Accel-Buffering": "no",
               "X-Phase-Id": phaseRow.id,
+              // Header extra: tier detectado por el router semántico
+              "X-Apollo-Complexity": estimate.complexity,
+              "X-Apollo-Router": estimate.via ?? "keywords",
             },
           });
         } catch (err) {
@@ -217,28 +227,7 @@ function json(data: unknown, status = 200) {
 }
 
 async function resolveProviderKey(
-  supabase: {
-    from: (table: "api_keys") => {
-      select: (columns: string) => {
-        eq: (
-          column: string,
-          value: string,
-        ) => {
-          order: (
-            column: string,
-            options: { ascending: boolean },
-          ) => {
-            limit: (count: number) => {
-              maybeSingle: () => Promise<{
-                data: { api_key?: string } | null;
-                error: { message: string } | null;
-              }>;
-            };
-          };
-        };
-      };
-    };
-  },
+  supabase: SupabaseClient<Database>,
   provider: string,
 ): Promise<string> {
   const { data, error } = await supabase
@@ -263,14 +252,20 @@ function buildPhasePrompt(
   personaId: PersonaId,
   goal: string,
   prior: { persona: string; output: string }[],
+  estimate: MissionEstimate,
 ): string {
-  const estimate = estimateMission(goal);
   const ctx = prior
     .map(
       (p) =>
         `### Previous ${PERSONAS[p.persona as PersonaId]?.name ?? p.persona} output\n${p.output}`,
     )
     .join("\n\n");
+
+  const routerNote =
+    estimate.via === "semantic" && estimate.intent
+      ? `- Intent detected: ${estimate.intent}\n- Router: semantic (Groq)\n`
+      : `- Router: keyword fallback\n`;
+
   const base = `# Mission goal
 ${goal}
 
@@ -281,8 +276,9 @@ ${goal}
 - Expected budget: ${estimate.budget}
 - Starting confidence: ${Math.round(estimate.confidence * 100)}%
 - Risk: ${estimate.risk}
-
+${routerNote}
 ${ctx ? ctx + "\n\n" : ""}`;
+
   if (personaId === "planner") {
     return (
       base +

@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as CookiesRouteImport } from './routes/cookies'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as AuthenticatedVoiceRouteImport } from './routes/_authenticated/voice'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
@@ -56,6 +57,11 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiChatRoute = ApiChatRouteImport.update({
@@ -138,6 +144,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AuthenticatedSettingsRoute
   '/voice': typeof AuthenticatedVoiceRoute
   '/api/chat': typeof ApiChatRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/missions/$id': typeof AuthenticatedMissionsIdRoute
   '/api/missions/stream': typeof ApiMissionsStreamRoute
   '/api/voice/recall': typeof ApiVoiceRecallRoute
@@ -158,6 +165,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AuthenticatedSettingsRoute
   '/voice': typeof AuthenticatedVoiceRoute
   '/api/chat': typeof ApiChatRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/missions/$id': typeof AuthenticatedMissionsIdRoute
   '/api/missions/stream': typeof ApiMissionsStreamRoute
   '/api/voice/recall': typeof ApiVoiceRecallRoute
@@ -180,6 +188,7 @@ export interface FileRoutesById {
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/voice': typeof AuthenticatedVoiceRoute
   '/api/chat': typeof ApiChatRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/_authenticated/missions/$id': typeof AuthenticatedMissionsIdRoute
   '/api/missions/stream': typeof ApiMissionsStreamRoute
   '/api/voice/recall': typeof ApiVoiceRecallRoute
@@ -202,6 +211,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/voice'
     | '/api/chat'
+    | '/auth/callback'
     | '/missions/$id'
     | '/api/missions/stream'
     | '/api/voice/recall'
@@ -222,6 +232,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/voice'
     | '/api/chat'
+    | '/auth/callback'
     | '/missions/$id'
     | '/api/missions/stream'
     | '/api/voice/recall'
@@ -243,6 +254,7 @@ export interface FileRouteTypes {
     | '/_authenticated/settings'
     | '/_authenticated/voice'
     | '/api/chat'
+    | '/auth/callback'
     | '/_authenticated/missions/$id'
     | '/api/missions/stream'
     | '/api/voice/recall'
@@ -258,6 +270,7 @@ export interface RootRouteChildren {
   PrivacyRoute: typeof PrivacyRoute
   TermsRoute: typeof TermsRoute
   ApiChatRoute: typeof ApiChatRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
   ApiMissionsStreamRoute: typeof ApiMissionsStreamRoute
   ApiVoiceRecallRoute: typeof ApiVoiceRecallRoute
   ApiVoiceTokenRoute: typeof ApiVoiceTokenRoute
@@ -306,6 +319,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/chat': {
@@ -447,6 +467,7 @@ const rootRouteChildren: RootRouteChildren = {
   PrivacyRoute: PrivacyRoute,
   TermsRoute: TermsRoute,
   ApiChatRoute: ApiChatRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
   ApiMissionsStreamRoute: ApiMissionsStreamRoute,
   ApiVoiceRecallRoute: ApiVoiceRecallRoute,
   ApiVoiceTokenRoute: ApiVoiceTokenRoute,

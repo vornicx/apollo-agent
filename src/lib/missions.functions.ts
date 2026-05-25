@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Database } from "@/integrations/supabase/types";
 import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
 import { estimateMission } from "@/lib/mission-routing";
@@ -309,28 +311,7 @@ ${ctx ? ctx + "\n\n" : ""}`;
 }
 
 async function resolveProviderKey(
-  supabase: {
-    from: (table: "api_keys") => {
-      select: (columns: string) => {
-        eq: (
-          column: string,
-          value: string,
-        ) => {
-          order: (
-            column: string,
-            options: { ascending: boolean },
-          ) => {
-            limit: (count: number) => {
-              maybeSingle: () => Promise<{
-                data: { api_key?: string } | null;
-                error: { message: string } | null;
-              }>;
-            };
-          };
-        };
-      };
-    };
-  },
+  supabase: SupabaseClient<Database>,
   provider: string,
 ): Promise<string> {
   const { data, error } = await supabase

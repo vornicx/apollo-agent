@@ -27,7 +27,7 @@ function LoginPage() {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: window.location.origin + "/missions" },
+          options: { emailRedirectTo: window.location.origin + "/auth/callback" },
         });
         if (error) throw error;
         toast.success("Check your email to confirm your account.");
@@ -48,7 +48,7 @@ function LoginPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: window.location.origin + "/chat",
+        redirectTo: window.location.origin + "/auth/callback",
       },
     });
     if (error) {

@@ -86,7 +86,9 @@ Before launch:
 
 - Apply Supabase migrations.
 - Verify RLS policies in Supabase.
-- Configure allowed auth redirect URLs.
+- Configure allowed auth redirect URLs:
+  - `http://localhost:5173/auth/callback`
+  - `https://your-domain.com/auth/callback`
 - Configure Cloudflare environment variables.
 - Run `npm run build`.
 - Create one test user and launch a mission.

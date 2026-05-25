@@ -84,6 +84,8 @@ Add only when needed:
 - Use Supabase OAuth directly.
 - Apply all Supabase migrations.
 - Configure Supabase auth redirect URLs.
+  - `http://localhost:5173/auth/callback`
+  - `https://your-domain.com/auth/callback`
 - Configure Cloudflare secrets.
 - Add at least one provider key through `/keys` or server env.
 - Run `npm run build`.

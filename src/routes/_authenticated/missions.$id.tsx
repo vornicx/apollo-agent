@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -9,7 +9,17 @@ import { PERSONAS, PERSONA_ORDER, nextPersonaAfter, type PersonaId } from "@/lib
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, CheckCircle2, CircleDashed, Loader2, Pencil, Play, Save, X, XCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CircleDashed,
+  Loader2,
+  Pencil,
+  Play,
+  Save,
+  X,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/missions/$id")({
@@ -39,7 +49,9 @@ function MissionDetail() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       const res = await fetch("/api/missions/stream", {
         method: "POST",
         signal: ctrl.signal,
@@ -52,8 +64,23 @@ function MissionDetail() {
       if (!res.ok || !res.body) {
         const t = await res.text().catch(() => "");
         let msg = `Request failed (${res.status})`;
-        try { msg = JSON.parse(t).error ?? msg; } catch { /* noop */ }
-        toast.error(msg);
+        try {
+          msg = JSON.parse(t).error ?? msg;
+        } catch {
+          /* noop */
+        }
+        // Si no hay key configurada, llevar al usuario a /keys en lugar de error crudo
+        if (
+          msg.toLowerCase().includes("no api key") ||
+          msg.toLowerCase().includes("api key configured")
+        ) {
+          toast.error("No API key configured. Add your OpenRouter key to launch missions.", {
+            action: { label: "Add key", onClick: () => (window.location.href = "/keys") },
+            duration: 8000,
+          });
+        } else {
+          toast.error(msg);
+        }
         return;
       }
       const reader = res.body.getReader();
@@ -80,7 +107,11 @@ function MissionDetail() {
   }
 
   if (isLoading || !data?.mission) {
-    return <div className="flex h-screen items-center justify-center text-muted-foreground">Loading mission…</div>;
+    return (
+      <div className="flex h-screen items-center justify-center text-muted-foreground">
+        Loading mission…
+      </div>
+    );
   }
   const { mission, phases } = data;
   const lastPersona = (phases.at(-1)?.persona as PersonaId | undefined) ?? null;
@@ -90,7 +121,10 @@ function MissionDetail() {
   return (
     <div className="h-screen overflow-y-auto">
       <div className="mx-auto max-w-4xl px-8 py-10">
-        <Link to="/missions" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
+        <Link
+          to="/missions"
+          className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"
+        >
           <ArrowLeft className="h-3.5 w-3.5" /> All missions
         </Link>
 
@@ -112,9 +146,14 @@ function MissionDetail() {
             const liveHere = live?.persona === pid;
             const status = liveHere ? "running" : phase?.status;
             return (
-              <li key={pid} className={`rounded-lg border p-4 ${status === "completed" ? "border-[var(--color-cyan)]/40 bg-card/80" : status === "running" ? "border-primary/50 bg-card" : status === "failed" ? "border-destructive/40 bg-card" : "border-border bg-card/40"}`}>
+              <li
+                key={pid}
+                className={`rounded-lg border p-4 ${status === "completed" ? "border-[var(--color-cyan)]/40 bg-card/80" : status === "running" ? "border-primary/50 bg-card" : status === "failed" ? "border-destructive/40 bg-card" : "border-border bg-card/40"}`}
+              >
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{p.role}</span>
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                    {p.role}
+                  </span>
                   <PhaseIcon status={status} />
                 </div>
                 <div className="mt-2 font-display tracking-wider">{p.name}</div>
@@ -128,9 +167,17 @@ function MissionDetail() {
         <section className="mt-8 flex items-center justify-between rounded-xl border border-border bg-card p-4">
           <div className="text-sm">
             {isRunning ? (
-              <>Streaming <strong className="font-display tracking-wider">{PERSONAS[live!.persona].name}</strong>…</>
+              <>
+                Streaming{" "}
+                <strong className="font-display tracking-wider">
+                  {PERSONAS[live!.persona].name}
+                </strong>
+                …
+              </>
             ) : next ? (
-              <>Next: <strong className="font-display tracking-wider">{PERSONAS[next].name}</strong></>
+              <>
+                Next: <strong className="font-display tracking-wider">{PERSONAS[next].name}</strong>
+              </>
             ) : (
               <>Mission complete. Re-run any phase below.</>
             )}
@@ -154,7 +201,9 @@ function MissionDetail() {
                 <div className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-cyan)]">
                   Live · {PERSONAS[live.persona].role}
                 </div>
-                <div className="font-display text-lg tracking-wider">{PERSONAS[live.persona].name}</div>
+                <div className="font-display text-lg tracking-wider">
+                  {PERSONAS[live.persona].name}
+                </div>
               </div>
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
             </header>
@@ -171,7 +220,9 @@ function MissionDetail() {
         {/* Phase outputs */}
         <section className="mt-8 space-y-6">
           {phases.length === 0 && !live && (
-            <p className="text-sm text-muted-foreground">No phases yet. Run the Planner to start.</p>
+            <p className="text-sm text-muted-foreground">
+              No phases yet. Run the Planner to start.
+            </p>
           )}
           {phases.map((ph) => (
             <PhaseCard
@@ -229,10 +280,14 @@ function PhaseCard({
           <div className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-cyan)]">
             Phase {phase.position + 1} · {persona?.role}
           </div>
-          <div className="font-display text-lg tracking-wider">{persona?.name ?? phase.persona}</div>
+          <div className="font-display text-lg tracking-wider">
+            {persona?.name ?? phase.persona}
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="font-mono text-[10px] text-muted-foreground">{phase.provider}/{phase.model}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {phase.provider}/{phase.model}
+          </span>
           <PhaseIcon status={phase.status} />
           {!editing && phase.status === "completed" && (
             <Button size="sm" variant="ghost" onClick={() => setEditing(true)} disabled={disabled}>
@@ -270,11 +325,19 @@ function PhaseCard({
               disabled={saving}
               onClick={async () => {
                 setSaving(true);
-                try { await onSave(draft); setEditing(false); }
-                finally { setSaving(false); }
+                try {
+                  await onSave(draft);
+                  setEditing(false);
+                } finally {
+                  setSaving(false);
+                }
               }}
             >
-              {saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
+              {saving ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="mr-1 h-3.5 w-3.5" />
+              )}
               Save
             </Button>
           </div>
