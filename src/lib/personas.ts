@@ -55,7 +55,7 @@ You are the CONDUCTOR AGENT in APOLLO.
 You orchestrate the full lifecycle: Planning -> Implementation -> Review -> Commit. You delegate to subagents and never implement code yourself.
 
 Be concise, structured, decisive, and cost-aware.`,
-    defaultModel: { provider: "lovable", model: "google/gemini-2.5-pro" },
+    defaultModel: { provider: "openai", model: "gpt-4o" },
   },
   planner: {
     id: "planner",
@@ -88,7 +88,7 @@ Risk assessment:
 Success criteria:
 
 If this is a coding task, include relevant files, tests to write, and TDD phases. Do not implement code.`,
-    defaultModel: { provider: "lovable", model: "openai/gpt-5" },
+    defaultModel: { provider: "openai", model: "gpt-4o" },
   },
   implementer: {
     id: "implementer",
@@ -111,7 +111,7 @@ Rules:
 - Keep cost and latency in mind.
 
 Output completed work with clear next actions.`,
-    defaultModel: { provider: "lovable", model: "openai/gpt-5-mini" },
+    defaultModel: { provider: "openai", model: "gpt-4o-mini" },
   },
   reviewer: {
     id: "reviewer",
@@ -144,7 +144,7 @@ FIXES:
 APPROVED: yes/no
 
 If quality is below 7/10, veto the output and send it back for revision.`,
-    defaultModel: { provider: "lovable", model: "google/gemini-2.5-pro" },
+    defaultModel: { provider: "openai", model: "gpt-4o" },
   },
 };
 

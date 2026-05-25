@@ -5,6 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
 import { estimateMission } from "@/lib/mission-routing";
+import { callProviderStream, getServerProviderKey, makeSSEParser } from "@/lib/ai-providers";
 
 const bodySchema = z.object({
   missionId: z.string().uuid(),
@@ -91,24 +92,16 @@ export const Route = createFileRoute("/api/missions/stream")({
             .update({ status: "running", current_phase: phaseType })
             .eq("id", missionId);
 
-          const apiKey = process.env.LOVABLE_API_KEY;
-          if (!apiKey) return json({ error: "LOVABLE_API_KEY not configured" }, 500);
-
-          const upstream = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: persona.defaultModel.model,
-              stream: true,
-              messages: [
-                { role: "system", content: sysPrompt },
-                { role: "user", content: userPrompt },
-              ],
-            }),
-          });
+          const apiKey = await resolveProviderKey(supabase, persona.defaultModel.provider);
+          const upstream = await callProviderStream(
+            persona.defaultModel.provider,
+            persona.defaultModel.model,
+            apiKey,
+            [
+              { role: "system", content: sysPrompt },
+              { role: "user", content: userPrompt },
+            ],
+          );
 
           if (!upstream.ok || !upstream.body) {
             const txt = await upstream.text().catch(() => "");
@@ -116,11 +109,11 @@ export const Route = createFileRoute("/api/missions/stream")({
               .from("mission_phases")
               .update({
                 status: "failed",
-                output: `Gateway error (${upstream.status}): ${txt.slice(0, 500)}`,
+                output: `Provider error (${upstream.status}): ${txt.slice(0, 500)}`,
                 completed_at: new Date().toISOString(),
               })
               .eq("id", phaseRow.id);
-            return json({ error: `Gateway error (${upstream.status})` }, 502);
+            return json({ error: `Provider error (${upstream.status})` }, 502);
           }
 
           const reader = upstream.body.getReader();
@@ -131,6 +124,7 @@ export const Route = createFileRoute("/api/missions/stream")({
           const stream = new ReadableStream({
             async start(controller) {
               const encoder = new TextEncoder();
+              const parser = makeSSEParser(persona.defaultModel.provider);
               try {
                 while (true) {
                   const { done, value } = await reader.read();
@@ -140,14 +134,14 @@ export const Route = createFileRoute("/api/missions/stream")({
                   while ((idx = buffer.indexOf("\n")) !== -1) {
                     const line = buffer.slice(0, idx).replace(/\r$/, "");
                     buffer = buffer.slice(idx + 1);
-                    const text = parseSSELine(line);
+                    const text = parser(line);
                     if (text) {
                       assistantText += text;
                       controller.enqueue(encoder.encode(text));
                     }
                   }
                 }
-                const tail = parseSSELine(buffer);
+                const tail = parser(buffer);
                 if (tail) {
                   assistantText += tail;
                   controller.enqueue(encoder.encode(tail));
@@ -222,16 +216,47 @@ function json(data: unknown, status = 200) {
   });
 }
 
-function parseSSELine(line: string): string {
-  if (!line || line.startsWith(":") || !line.startsWith("data:")) return "";
-  const payload = line.slice(5).trim();
-  if (!payload || payload === "[DONE]") return "";
-  try {
-    const obj = JSON.parse(payload);
-    return obj?.choices?.[0]?.delta?.content ?? "";
-  } catch {
-    return "";
-  }
+async function resolveProviderKey(
+  supabase: {
+    from: (table: "api_keys") => {
+      select: (columns: string) => {
+        eq: (
+          column: string,
+          value: string,
+        ) => {
+          order: (
+            column: string,
+            options: { ascending: boolean },
+          ) => {
+            limit: (count: number) => {
+              maybeSingle: () => Promise<{
+                data: { api_key?: string } | null;
+                error: { message: string } | null;
+              }>;
+            };
+          };
+        };
+      };
+    };
+  },
+  provider: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("api_keys")
+    .select("api_key")
+    .eq("provider", provider)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data?.api_key) return data.api_key;
+
+  const serverKey = getServerProviderKey(provider);
+  if (serverKey) return serverKey;
+
+  throw new Error(
+    `No API key configured for ${provider}. Add one in /keys or configure a server key.`,
+  );
 }
 
 function buildPhasePrompt(

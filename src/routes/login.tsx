@@ -2,7 +2,6 @@ import { createFileRoute, Navigate, useNavigate, Link } from "@tanstack/react-ro
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +25,8 @@ function LoginPage() {
     try {
       if (mode === "signup") {
         const { error } = await supabase.auth.signUp({
-          email, password,
+          email,
+          password,
           options: { emailRedirectTo: window.location.origin + "/missions" },
         });
         if (error) throw error;
@@ -45,16 +45,16 @@ function LoginPage() {
 
   async function handleGoogle() {
     setBusy(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin + "/chat",
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin + "/chat",
+      },
     });
-    if (result.error) {
-      toast.error(result.error.message ?? "Google sign-in failed");
+    if (error) {
+      toast.error(error.message ?? "Google sign-in failed");
       setBusy(false);
-      return;
     }
-    if (result.redirected) return;
-    navigate({ to: "/chat" });
   }
 
   return (
@@ -73,12 +73,7 @@ function LoginPage() {
           </p>
         </div>
 
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={handleGoogle}
-          disabled={busy}
-        >
+        <Button variant="outline" className="w-full" onClick={handleGoogle} disabled={busy}>
           Continue with Google
         </Button>
 
@@ -89,11 +84,24 @@ function LoginPage() {
         <form onSubmit={handleEmail} className="space-y-4">
           <div>
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </div>
           <div>
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+            />
           </div>
           <Button type="submit" className="w-full" disabled={busy}>
             {mode === "signin" ? "Sign in" : "Sign up"}
@@ -112,10 +120,18 @@ function LoginPage() {
 
         <p className="mt-8 text-center text-[11px] leading-relaxed text-muted-foreground">
           By continuing you agree to our{" "}
-          <Link to="/terms" className="underline hover:text-foreground">Terms</Link>,{" "}
-          <Link to="/privacy" className="underline hover:text-foreground">Privacy Policy</Link>{" "}
+          <Link to="/terms" className="underline hover:text-foreground">
+            Terms
+          </Link>
+          ,{" "}
+          <Link to="/privacy" className="underline hover:text-foreground">
+            Privacy Policy
+          </Link>{" "}
           and{" "}
-          <Link to="/cookies" className="underline hover:text-foreground">Cookie Policy</Link>.
+          <Link to="/cookies" className="underline hover:text-foreground">
+            Cookie Policy
+          </Link>
+          .
         </p>
       </div>
     </div>

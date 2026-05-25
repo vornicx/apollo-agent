@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
 import { estimateMission } from "@/lib/mission-routing";
+import { callProviderText, getServerProviderKey, type ChatMessage } from "@/lib/ai-providers";
 
 export const listMissions = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -132,59 +133,26 @@ export const promoteConversation = createServerFn({ method: "POST" })
   });
 
 async function extractGoal(transcript: string): Promise<{ title: string; goal: string }> {
-  const apiKey = process.env.LOVABLE_API_KEY;
-  if (!apiKey) throw new Error("LOVABLE_API_KEY is not configured");
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extract a concise mission goal from a conversation. Goal must be actionable, self-contained, include relevant context. Title 6 words max.",
-        },
-        { role: "user", content: transcript },
-      ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "create_mission",
-            description: "Create a mission from the conversation.",
-            parameters: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-                goal: { type: "string" },
-              },
-              required: ["title", "goal"],
-              additionalProperties: false,
-            },
-          },
-        },
-      ],
-      tool_choice: { type: "function", function: { name: "create_mission" } },
-    }),
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`Goal extraction failed (${res.status}): ${t.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as {
-    choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[];
-  };
-  const args = json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
-  if (!args) throw new Error("Goal extraction returned no result");
-  const parsed = JSON.parse(args) as { title?: string; goal?: string };
+  const provider = process.env.APOLLO_EXTRACT_PROVIDER ?? "openai";
+  const model = process.env.APOLLO_EXTRACT_MODEL ?? "gpt-4o-mini";
+  const apiKey = getServerProviderKey(provider);
+  if (!apiKey) throw new Error(`${provider.toUpperCase()} API key is not configured`);
+  const output = await callProviderText(provider, model, apiKey, [
+    {
+      role: "system",
+      content:
+        "Extract a concise mission goal from a conversation. Return only JSON with keys title and goal. Goal must be actionable, self-contained and include relevant context. Title 6 words max.",
+    },
+    { role: "user", content: transcript },
+  ]);
+  const parsed = JSON.parse(extractJson(output)) as { title?: string; goal?: string };
   return {
     title: (parsed.title ?? "Promoted mission").slice(0, 120),
     goal: parsed.goal ?? transcript.slice(0, 2000),
   };
 }
 
-/** Run a single persona phase via the Lovable AI Gateway. */
+/** Run a single persona phase via direct provider APIs. */
 export const runPhase = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
@@ -248,7 +216,14 @@ export const runPhase = createServerFn({ method: "POST" })
       .eq("id", data.missionId);
 
     try {
-      const output = await callLovableAI(persona.defaultModel.model, systemPrompt, userPrompt);
+      const apiKey = await resolveProviderKey(supabase, persona.defaultModel.provider);
+      const output = await callApolloAI(
+        persona.defaultModel.provider,
+        persona.defaultModel.model,
+        apiKey,
+        systemPrompt,
+        userPrompt,
+      );
 
       await supabase
         .from("mission_phases")
@@ -332,27 +307,67 @@ ${ctx ? ctx + "\n\n" : ""}`;
   );
 }
 
-async function callLovableAI(model: string, system: string, user: string): Promise<string> {
-  const apiKey = process.env.LOVABLE_API_KEY;
-  if (!apiKey) throw new Error("LOVABLE_API_KEY is not configured");
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`Lovable AI error (${res.status}): ${txt.slice(0, 500)}`);
-  }
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  return json.choices?.[0]?.message?.content?.trim() ?? "";
+async function resolveProviderKey(
+  supabase: {
+    from: (table: "api_keys") => {
+      select: (columns: string) => {
+        eq: (
+          column: string,
+          value: string,
+        ) => {
+          order: (
+            column: string,
+            options: { ascending: boolean },
+          ) => {
+            limit: (count: number) => {
+              maybeSingle: () => Promise<{
+                data: { api_key?: string } | null;
+                error: { message: string } | null;
+              }>;
+            };
+          };
+        };
+      };
+    };
+  },
+  provider: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("api_keys")
+    .select("api_key")
+    .eq("provider", provider)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data?.api_key) return data.api_key;
+
+  const serverKey = getServerProviderKey(provider);
+  if (serverKey) return serverKey;
+
+  throw new Error(
+    `No API key configured for ${provider}. Add one in /keys or configure a server key.`,
+  );
+}
+
+async function callApolloAI(
+  provider: string,
+  model: string,
+  apiKey: string,
+  system: string,
+  user: string,
+): Promise<string> {
+  const messages: ChatMessage[] = [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+  return callProviderText(provider, model, apiKey, messages);
+}
+
+function extractJson(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) return trimmed;
+  const match = trimmed.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("Goal extraction returned no JSON");
+  return match[0];
 }

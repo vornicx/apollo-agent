@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { Database } from "@/integrations/supabase/types";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
+import { callProviderStream, makeSSEParser, type ChatMessage } from "@/lib/ai-providers";
 
 const bodySchema = z.object({
   conversationId: z.string().uuid(),
@@ -83,16 +84,19 @@ export const Route = createFileRoute("/api/chat")({
               .eq("id", conversationId);
           }
 
-          const allMessages: ChatMsg[] = [...(history ?? []), { role: "user", content: message }];
+          const allMessages: ChatMessage[] = [
+            ...((history ?? []) as ChatMessage[]),
+            { role: "user", content: message },
+          ];
 
           // Recall + inject Apollo memory as a system message
           const mems = await recallForUser(supabase, message, 6);
           const memBlock = formatMemoriesBlock(mems);
-          const messagesWithMemory: ChatMsg[] = memBlock
+          const messagesWithMemory: ChatMessage[] = memBlock
             ? [{ role: "system", content: memBlock }, ...allMessages]
             : allMessages;
 
-          const upstream = await callProvider(
+          const upstream = await callProviderStream(
             conv.provider,
             conv.model,
             keyRow.api_key,
@@ -189,10 +193,7 @@ export const Route = createFileRoute("/api/chat")({
           });
         } catch (err) {
           console.error("chat route error", err);
-          return json(
-            { error: err instanceof Error ? err.message : "Unknown error" },
-            500,
-          );
+          return json({ error: err instanceof Error ? err.message : "Unknown error" }, 500);
         }
       },
     },
@@ -211,105 +212,4 @@ function takeLine(buf: string): { line: string; rest: string } | null {
   if (idx === -1) return null;
   const line = buf.slice(0, idx).replace(/\r$/, "");
   return { line, rest: buf.slice(idx + 1) };
-}
-
-type ChatMsg = { role: string; content: string };
-
-async function callProvider(
-  provider: string,
-  model: string,
-  apiKey: string,
-  messages: ChatMsg[],
-): Promise<Response> {
-  switch (provider) {
-    case "anthropic": {
-      const system = messages.find((m) => m.role === "system")?.content;
-      const msgs = messages
-        .filter((m) => m.role !== "system")
-        .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
-      return fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 4096,
-          stream: true,
-          ...(system ? { system } : {}),
-          messages: msgs,
-        }),
-      });
-    }
-    case "openai":
-    case "groq":
-    case "openrouter":
-    case "mistral": {
-      const baseUrl =
-        provider === "openai"
-          ? "https://api.openai.com/v1"
-          : provider === "groq"
-            ? "https://api.groq.com/openai/v1"
-            : provider === "openrouter"
-              ? "https://openrouter.ai/api/v1"
-              : "https://api.mistral.ai/v1";
-      return fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ model, messages, stream: true }),
-      });
-    }
-    case "google": {
-      const sys = messages.find((m) => m.role === "system")?.content;
-      const contents = messages
-        .filter((m) => m.role !== "system")
-        .map((m) => ({
-          role: m.role === "assistant" ? "model" : "user",
-          parts: [{ text: m.content }],
-        }));
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
-      return fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          ...(sys ? { systemInstruction: { parts: [{ text: sys }] } } : {}),
-        }),
-      });
-    }
-    default:
-      return new Response(`Unsupported provider: ${provider}`, { status: 400 });
-  }
-}
-
-// Returns a parser that extracts text deltas from a single SSE line.
-function makeSSEParser(provider: string): (line: string) => string {
-  return (line: string) => {
-    if (!line || line.startsWith(":") || !line.startsWith("data:")) return "";
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") return "";
-    try {
-      const obj = JSON.parse(payload);
-      if (provider === "anthropic") {
-        if (obj.type === "content_block_delta" && obj.delta?.type === "text_delta") {
-          return obj.delta.text ?? "";
-        }
-        return "";
-      }
-      if (provider === "google") {
-        const parts = obj?.candidates?.[0]?.content?.parts;
-        if (Array.isArray(parts)) return parts.map((p: { text?: string }) => p.text ?? "").join("");
-        return "";
-      }
-      // OpenAI-compatible (openai, groq, openrouter, mistral)
-      return obj?.choices?.[0]?.delta?.content ?? "";
-    } catch {
-      return "";
-    }
-  };
 }
