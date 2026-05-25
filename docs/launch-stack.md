@@ -83,9 +83,12 @@ Add only when needed:
 - Remove all Lovable packages and imports.
 - Use Supabase OAuth directly.
 - Apply all Supabase migrations.
+- Enable Google provider in Supabase Auth with the Google OAuth Client ID and Secret.
 - Configure Supabase auth redirect URLs.
   - `http://localhost:5173/auth/callback`
   - `https://your-domain.com/auth/callback`
+- Configure Google Cloud OAuth redirect URI.
+  - `https://<your-supabase-project-ref>.supabase.co/auth/v1/callback`
 - Configure Cloudflare secrets.
 - Add at least one provider key through `/keys` or server env.
 - Run `npm run build`.

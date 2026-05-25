@@ -86,9 +86,12 @@ Before launch:
 
 - Apply Supabase migrations.
 - Verify RLS policies in Supabase.
+- Enable Google as a Supabase Auth provider with your Google OAuth Client ID and Secret.
 - Configure allowed auth redirect URLs:
   - `http://localhost:5173/auth/callback`
   - `https://your-domain.com/auth/callback`
+- Add this redirect URI in Google Cloud OAuth client:
+  - `https://<your-supabase-project-ref>.supabase.co/auth/v1/callback`
 - Configure Cloudflare environment variables.
 - Run `npm run build`.
 - Create one test user and launch a mission.
