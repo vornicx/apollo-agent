@@ -10,6 +10,7 @@ export function openApolloDb(workspace) {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   migrate(db);
+  migrateColumns(db);
   return db;
 }
 
@@ -40,6 +41,7 @@ export function migrate(db) {
       output TEXT,
       confidence REAL,
       review_score REAL,
+      iteration INTEGER NOT NULL DEFAULT 1,
       started_at TEXT NOT NULL,
       completed_at TEXT
     );
@@ -119,6 +121,12 @@ export function migrate(db) {
       created_at TEXT NOT NULL
     );
   `);
+}
+
+function migrateColumns(db) {
+  try {
+    db.exec("ALTER TABLE mission_steps ADD COLUMN iteration INTEGER NOT NULL DEFAULT 1");
+  } catch { /* column already exists */ }
 }
 
 export function nowIso() {

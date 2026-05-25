@@ -159,6 +159,8 @@ async function runCommand(args) {
   }
 }
 
+const DEFAULT_MAX_ITERATIONS = 3;
+
 async function executeMission({ db, workspace, config, missionId, goal, mode }) {
   recordProgress(db, workspace, missionId, 5, "Classifying mission...");
   const estimate = await estimateMissionSemantic(goal, process.env.GROQ_API_KEY);
@@ -228,69 +230,163 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     return;
   }
 
-  recordProgress(db, workspace, missionId, 70, "Executing mission proposal...");
-  updateMission(db, missionId, { status: "executing" });
-  const implementer = await implementerAgent({
-    goal,
-    plan,
-    files,
-    provider: config.provider,
-    model: config.model,
-  });
-  saveModelRun(db, missionId, "implementer", config, implementer);
-  saveStep(
-    db,
-    missionId,
-    "implementer",
-    "completed",
-    config.model,
-    plan,
-    JSON.stringify(implementer.parsed, null, 2),
-    implementer.parsed.confidence,
-  );
+  const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  let feedback = null;
+  let lastImplementer = null;
+  let lastReviewer = null;
+  let approved = false;
 
-  for (const file of implementer.parsed.files) {
-    if (!file?.path || typeof file.content !== "string") continue;
-    db.prepare(
-      "INSERT INTO patches (id, mission_id, path, content, created_at) VALUES (?, ?, ?, ?, ?)",
-    ).run(newId("patch"), missionId, file.path, file.content, nowIso());
+  for (let iteration = 1; iteration <= maxIterations; iteration++) {
+    if (iteration > 1) {
+      const progressPct = 25 + Math.round(((iteration - 1) / maxIterations) * 15);
+      recordProgress(
+        db,
+        workspace,
+        missionId,
+        progressPct,
+        `Re-planning (iteration ${iteration}/${maxIterations})...`,
+      );
+      updateMission(db, missionId, { status: "planning" });
+      const replanner = await plannerAgent({
+        goal,
+        estimate,
+        files,
+        projectDoc,
+        provider: config.provider,
+        model: config.model,
+        feedback,
+      });
+      plan = replanner.content;
+      saveModelRun(db, missionId, "planner", config, replanner);
+      saveStep(
+        db,
+        missionId,
+        "planner",
+        "completed",
+        config.model,
+        `${goal}\n\nFeedback from iteration ${iteration - 1}:\n${JSON.stringify(feedback)}`,
+        plan,
+        estimate.confidence,
+        null,
+        iteration,
+      );
+    }
+
+    const implProgress = 45 + Math.round(((iteration - 1) / maxIterations) * 20);
+    recordProgress(
+      db,
+      workspace,
+      missionId,
+      implProgress,
+      `Executing mission proposal (iteration ${iteration}/${maxIterations})...`,
+    );
+    updateMission(db, missionId, { status: "executing" });
+    const implementer = await implementerAgent({
+      goal,
+      plan,
+      files,
+      provider: config.provider,
+      model: config.model,
+    });
+    saveModelRun(db, missionId, "implementer", config, implementer);
+    saveStep(
+      db,
+      missionId,
+      "implementer",
+      "completed",
+      config.model,
+      plan,
+      JSON.stringify(implementer.parsed, null, 2),
+      implementer.parsed.confidence,
+      null,
+      iteration,
+    );
+    lastImplementer = implementer;
+
+    db.prepare("DELETE FROM patches WHERE mission_id = ? AND applied = 0").run(missionId);
+    for (const file of implementer.parsed.files) {
+      if (!file?.path || typeof file.content !== "string") continue;
+      db.prepare(
+        "INSERT INTO patches (id, mission_id, path, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).run(newId("patch"), missionId, file.path, file.content, nowIso());
+    }
+
+    const reviewProgress = 70 + Math.round(((iteration - 1) / maxIterations) * 20);
+    recordProgress(
+      db,
+      workspace,
+      missionId,
+      reviewProgress,
+      `Reviewing output (iteration ${iteration}/${maxIterations})...`,
+    );
+    updateMission(db, missionId, { status: "reviewing" });
+    const reviewer = await reviewerAgent({
+      goal,
+      plan,
+      proposal: implementer.parsed,
+      provider: config.provider,
+      model: config.model,
+    });
+    saveModelRun(db, missionId, "reviewer", config, reviewer);
+    saveStep(
+      db,
+      missionId,
+      "reviewer",
+      "completed",
+      config.model,
+      JSON.stringify(implementer.parsed, null, 2),
+      JSON.stringify(reviewer.parsed, null, 2),
+      reviewer.parsed.confidence,
+      reviewer.parsed.score,
+      iteration,
+    );
+    lastReviewer = reviewer;
+
+    if (reviewer.parsed.approved && reviewer.parsed.score >= 7) {
+      approved = true;
+      break;
+    }
+
+    feedback = { issues: reviewer.parsed.issues, fixes: reviewer.parsed.fixes };
+    const issuesSummary = reviewer.parsed.issues.slice(0, 3).join("; ");
+    recordProgress(
+      db,
+      workspace,
+      missionId,
+      reviewProgress + 2,
+      `Iteration ${iteration} rejected (score ${reviewer.parsed.score}/10).${iteration < maxIterations ? " Retrying with feedback." : ""}`,
+    );
+    console.log(
+      `Iteration ${iteration}/${maxIterations} rejected. Score: ${reviewer.parsed.score}/10`,
+    );
+    if (issuesSummary) console.log(`Issues: ${issuesSummary}`);
   }
 
-  recordProgress(db, workspace, missionId, 90, "Reviewing output...");
-  updateMission(db, missionId, { status: "reviewing" });
-  const reviewer = await reviewerAgent({
-    goal,
-    plan,
-    proposal: implementer.parsed,
-    provider: config.provider,
-    model: config.model,
-  });
-  saveModelRun(db, missionId, "reviewer", config, reviewer);
-  saveStep(
-    db,
-    missionId,
-    "reviewer",
-    "completed",
-    config.model,
-    JSON.stringify(implementer.parsed, null, 2),
-    JSON.stringify(reviewer.parsed, null, 2),
-    reviewer.parsed.confidence,
-    reviewer.parsed.score,
-  );
-
-  if (!reviewer.parsed.approved || reviewer.parsed.score < 7) {
-    updateMission(db, missionId, { status: "paused" });
-    recordProgress(db, workspace, missionId, 92, "Reviewer vetoed output. Mission paused.");
-    console.log("Reviewer vetoed this proposal. Run apollo diff to inspect it.");
+  if (!approved) {
+    updateMission(db, missionId, { status: "max_iterations_reached" });
+    recordProgress(
+      db,
+      workspace,
+      missionId,
+      100,
+      `Max iterations (${maxIterations}) reached without approval. Last score: ${lastReviewer?.parsed.score ?? 0}/10.`,
+    );
+    console.log(`\nMax iterations (${maxIterations}) reached without approval.`);
+    console.log(
+      `Last score: ${lastReviewer?.parsed.score ?? 0}/10. Run apollo diff to inspect patches.`,
+    );
+    const emptyApply = { applied: 0, blocked: 0 };
+    const learned = reflection(goal, estimate, lastImplementer?.parsed, lastReviewer?.parsed);
+    printMissionSummary(missionId, estimate, cost, emptyApply, learned);
     return;
   }
 
   const applyResult = applyPatches(db, workspace, missionId, mode);
   if (mode === "full-auto") {
-    await runCommands(db, workspace, missionId, implementer.parsed.commands);
+    await runCommands(db, workspace, missionId, lastImplementer.parsed.commands);
   }
 
-  const learned = reflection(goal, estimate, implementer.parsed, reviewer.parsed);
+  const learned = reflection(goal, estimate, lastImplementer.parsed, lastReviewer.parsed);
   db.prepare(
     "INSERT INTO memories (id, key, value, kind, importance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(newId("mem"), `mission:${missionId}`, JSON.stringify(learned), "reflection", 2, nowIso());
@@ -371,13 +467,14 @@ function saveStep(
   output,
   confidence,
   reviewScore = null,
+  iteration = 1,
 ) {
   db.prepare(
     `
     INSERT INTO mission_steps (
       id, mission_id, step_type, status, model, input, output, confidence, review_score,
-      started_at, completed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      iteration, started_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     newId("step"),
@@ -389,6 +486,7 @@ function saveStep(
     output,
     confidence,
     reviewScore,
+    iteration,
     nowIso(),
     nowIso(),
   );

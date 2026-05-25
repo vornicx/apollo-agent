@@ -36,7 +36,23 @@ export function makeStaticPlan({ goal, estimate, files }) {
   ].join("\n");
 }
 
-export async function plannerAgent({ goal, estimate, files, projectDoc, provider, model }) {
+export async function plannerAgent({ goal, estimate, files, projectDoc, provider, model, feedback }) {
+  const feedbackBlock = feedback?.issues?.length
+    ? [
+        "",
+        "## Iteration feedback — revision required",
+        "The previous implementation was rejected by the reviewer.",
+        "",
+        "Issues found:",
+        ...feedback.issues.map((i) => `- ${i}`),
+        "",
+        "Required fixes:",
+        ...feedback.fixes.map((f) => `- ${f}`),
+        "",
+        "Revise your plan to address ALL issues above before proceeding.",
+      ].join("\n")
+    : "";
+
   const result = await callModel({
     provider,
     model,
@@ -54,6 +70,7 @@ export async function plannerAgent({ goal, estimate, files, projectDoc, provider
           `Workspace files:\n${files.slice(0, 80).join("\n")}`,
           "",
           "Write a concise mission plan. Include likely files, risks, tests and success criteria.",
+          feedbackBlock,
         ].join("\n"),
       },
     ],

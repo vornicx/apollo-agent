@@ -154,6 +154,7 @@ export type Database = {
           created_at: string
           id: string
           input: string
+          iteration: number
           mission_id: string
           model: string
           output: string
@@ -169,6 +170,7 @@ export type Database = {
           created_at?: string
           id?: string
           input?: string
+          iteration?: number
           mission_id: string
           model: string
           output?: string
@@ -184,6 +186,7 @@ export type Database = {
           created_at?: string
           id?: string
           input?: string
+          iteration?: number
           mission_id?: string
           model?: string
           output?: string

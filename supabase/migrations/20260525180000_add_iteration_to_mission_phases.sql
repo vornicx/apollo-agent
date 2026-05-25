@@ -1,0 +1,2 @@
+ALTER TABLE public.mission_phases
+  ADD COLUMN IF NOT EXISTS iteration INTEGER NOT NULL DEFAULT 1;
