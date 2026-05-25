@@ -1,0 +1,221 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+/* APOLLO — Mission Control identity */
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-cyan: var(--cyan);
+  --color-violet: var(--violet);
+  --color-success: var(--success);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* APOLLO — Mission Control palette
+   Void Black #07090D · Surface #0F131A · Card #151B24 · Border #222B38
+   Apollo Blue #5B8CFF · Signal Cyan #6EE7F9 · Review Purple #8B5CF6 · Success #2ED47A */
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.13 0.012 250);            /* #07090D */
+  --foreground: oklch(0.96 0.005 250);
+
+  --card: oklch(0.19 0.015 250);                  /* #151B24 */
+  --card-foreground: oklch(0.96 0.005 250);
+
+  --popover: oklch(0.19 0.015 250);
+  --popover-foreground: oklch(0.96 0.005 250);
+
+  --primary: oklch(0.68 0.16 265);                /* #5B8CFF Apollo Blue */
+  --primary-foreground: oklch(0.13 0.012 250);
+
+  --secondary: oklch(0.23 0.018 250);
+  --secondary-foreground: oklch(0.96 0.005 250);
+
+  --muted: oklch(0.22 0.015 250);
+  --muted-foreground: oklch(0.68 0.015 250);
+
+  --accent: oklch(0.28 0.04 270);
+  --accent-foreground: oklch(0.98 0.005 250);
+
+  --destructive: oklch(0.62 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --border: oklch(0.28 0.018 250);                /* #222B38 */
+  --input: oklch(0.23 0.018 250);
+  --ring: oklch(0.68 0.16 265);
+
+  --cyan: oklch(0.85 0.13 210);                   /* #6EE7F9 Signal Cyan */
+  --violet: oklch(0.65 0.21 295);                 /* #8B5CF6 Review Purple */
+  --success: oklch(0.75 0.18 155);                /* #2ED47A */
+
+  --sidebar: oklch(0.15 0.012 250);               /* #0F131A surface */
+  --sidebar-foreground: oklch(0.88 0.01 250);
+  --sidebar-primary: oklch(0.68 0.16 265);
+  --sidebar-primary-foreground: oklch(0.13 0.012 250);
+  --sidebar-accent: oklch(0.22 0.015 250);
+  --sidebar-accent-foreground: oklch(0.96 0.005 250);
+  --sidebar-border: oklch(0.22 0.015 250);
+  --sidebar-ring: oklch(0.68 0.16 265);
+}
+
+.dark {
+  --background: oklch(0.13 0.012 250);
+  --foreground: oklch(0.96 0.005 250);
+  --card: oklch(0.19 0.015 250);
+  --card-foreground: oklch(0.96 0.005 250);
+  --popover: oklch(0.19 0.015 250);
+  --popover-foreground: oklch(0.96 0.005 250);
+  --primary: oklch(0.68 0.16 265);
+  --primary-foreground: oklch(0.13 0.012 250);
+  --secondary: oklch(0.23 0.018 250);
+  --secondary-foreground: oklch(0.96 0.005 250);
+  --muted: oklch(0.22 0.015 250);
+  --muted-foreground: oklch(0.68 0.015 250);
+  --accent: oklch(0.28 0.04 270);
+  --accent-foreground: oklch(0.98 0.005 250);
+  --destructive: oklch(0.62 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.28 0.018 250);
+  --input: oklch(0.23 0.018 250);
+  --ring: oklch(0.68 0.16 265);
+  --cyan: oklch(0.85 0.13 210);
+  --violet: oklch(0.65 0.21 295);
+  --success: oklch(0.75 0.18 155);
+  --sidebar: oklch(0.15 0.012 250);
+  --sidebar-foreground: oklch(0.88 0.01 250);
+  --sidebar-primary: oklch(0.68 0.16 265);
+  --sidebar-primary-foreground: oklch(0.13 0.012 250);
+  --sidebar-accent: oklch(0.22 0.015 250);
+  --sidebar-accent-foreground: oklch(0.96 0.005 250);
+  --sidebar-border: oklch(0.22 0.015 250);
+  --sidebar-ring: oklch(0.68 0.16 265);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html { color-scheme: dark; }
+  body {
+    background:
+      radial-gradient(900px 500px at 15% -10%, color-mix(in oklab, var(--color-primary) 22%, transparent), transparent 60%),
+      radial-gradient(800px 500px at 110% 10%, color-mix(in oklab, var(--color-violet) 14%, transparent), transparent 60%),
+      radial-gradient(700px 400px at 50% 110%, color-mix(in oklab, var(--color-cyan) 10%, transparent), transparent 60%),
+      var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+  }
+  .font-display { font-family: var(--font-display); letter-spacing: -0.01em; }
+  .font-mono { font-family: var(--font-mono); }
+}
+
+/* Branded helpers */
+.bg-plasma {
+  background-image: linear-gradient(135deg, var(--color-primary), var(--color-cyan));
+}
+.text-plasma {
+  background-image: linear-gradient(120deg, var(--color-primary) 0%, var(--color-cyan) 60%, var(--color-violet) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.glow-plasma {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-primary) 35%, transparent),
+    0 10px 40px -10px color-mix(in oklab, var(--color-primary) 45%, transparent),
+    0 0 80px -30px color-mix(in oklab, var(--color-cyan) 60%, transparent);
+}
+.ring-plasma {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-cyan) 35%, transparent);
+}
+.surface-glass {
+  background: linear-gradient(180deg,
+    color-mix(in oklab, var(--color-card) 80%, transparent),
+    color-mix(in oklab, var(--color-card) 50%, transparent));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.grid-bg {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-border) 60%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-border) 60%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: -1px -1px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 0%, transparent 75%);
+}
+
+/* Orbit animation for the hero graph */
+@keyframes orbit-spin { to { transform: rotate(360deg); } }
+@keyframes orbit-spin-rev { to { transform: rotate(-360deg); } }
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%       { opacity: 1;    transform: scale(1.08); }
+}
+@keyframes dash-flow {
+  to { stroke-dashoffset: -240; }
+}
+.animate-orbit { animation: orbit-spin 28s linear infinite; transform-origin: center; }
+.animate-orbit-rev { animation: orbit-spin-rev 36s linear infinite; transform-origin: center; }
+.animate-pulse-soft { animation: pulse-soft 2.6s ease-in-out infinite; }
+.animate-dash { stroke-dasharray: 6 8; animation: dash-flow 6s linear infinite; }
+
+/* Markdown styling inside chat / phase outputs */
+.prose-chat { line-height: 1.65; }
+.prose-chat p { margin: 0.5em 0; }
+.prose-chat pre {
+  background: oklch(0.15 0.012 250);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  margin: 0.75rem 0;
+}
+.prose-chat code {
+  font-family: var(--font-mono);
+  background: oklch(0.22 0.015 250);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+}
+.prose-chat pre code { background: transparent; padding: 0; }
+.prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 600; margin: 1em 0 0.5em; }
+.prose-chat ul, .prose-chat ol { margin: 0.5em 0; padding-left: 1.5em; }
+.prose-chat a { color: var(--color-cyan); text-decoration: underline; }
