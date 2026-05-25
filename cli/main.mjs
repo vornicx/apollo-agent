@@ -28,8 +28,6 @@ import { runAllowedCommand } from "./commands.mjs";
 import {
   Spinner,
   clr,
-  printAgentHeader,
-  printBanner,
   printError,
   printInfo,
   printMissionSummary,
@@ -37,6 +35,14 @@ import {
   printWarn,
   statusIcon,
 } from "./ui.mjs";
+import {
+  StreamingBox,
+  askApproval,
+  printPipeline,
+  printRejectionBox,
+  shellPrompt,
+  startupAnimation,
+} from "./tui.mjs";
 
 export async function main(argv) {
   if (argv.length === 0) return shellCommand();
@@ -60,9 +66,14 @@ async function dispatch(argv) {
 }
 
 async function shellCommand() {
-  printBanner();
-  const rl = createInterface({ input, output, prompt: "apollo> " });
+  const workspace = getWorkspace();
+  const config = readConfig(workspace);
+  await startupAnimation(workspace, config);
+
+  const prompt = shellPrompt();
+  const rl = createInterface({ input, output, prompt, terminal: true });
   rl.prompt();
+
   for await (const rawLine of rl) {
     const line = rawLine.trim();
     if (!line) {
@@ -70,18 +81,20 @@ async function shellCommand() {
       continue;
     }
     if (["exit", "quit", ":q"].includes(line.toLowerCase())) {
+      console.log(clr.dim("\n  Goodbye.\n"));
       break;
     }
     if (line.toLowerCase() === "clear") {
-      console.clear();
-      printBanner();
+      const c = readConfig(workspace);
+      await startupAnimation(workspace, c);
+      rl.setPrompt(prompt);
       rl.prompt();
       continue;
     }
     try {
       await dispatch(parseShellLine(line));
     } catch (error) {
-      console.error(`Apollo: ${error instanceof Error ? error.message : String(error)}`);
+      printError(error instanceof Error ? error.message : String(error));
     }
     rl.prompt();
   }
@@ -92,10 +105,11 @@ function initCommand() {
   const workspace = getWorkspace();
   ensureApolloProject(workspace);
   openApolloDb(workspace).close();
-  console.log("Apollo local project initialized.");
-  console.log(`- ${APOLLO_DIR}/apollo.db`);
-  console.log("- APOLLO.md");
-  console.log("- .apolloignore");
+  printSuccess("Apollo project initialized.");
+  console.log(`  ${clr.dim("·")} ${APOLLO_DIR}/apollo.db`);
+  console.log(`  ${clr.dim("·")} APOLLO.md`);
+  console.log(`  ${clr.dim("·")} .apolloignore`);
+  printInfo('Run "apollo doctor" to verify your setup.');
 }
 
 function doctorCommand() {
@@ -221,8 +235,10 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
   const projectDoc = readProjectDoc(workspace);
 
   // ── Initial plan (iteration 1) ──────────────────────────────────────────────
-  printAgentHeader("planner", "iteration 1");
+  printPipeline("plan");
   let plan;
+  const planBox = new StreamingBox("◆ PLANNER  ·  iteration 1", { colorFn: clr.cyan });
+
   if (mode === "plan" || !process.env.OPENROUTER_API_KEY) {
     plan = makeStaticPlan({ goal, estimate, files });
     if (mode !== "plan") {
@@ -233,26 +249,23 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
         message: "OPENROUTER_API_KEY missing. Apollo produced a local plan only.",
         progress: 25,
       });
-    } else {
-      console.log(plan);
     }
+    planBox.open();
+    planBox.write(plan);
+    planBox.close();
   } else {
-    const plannerSpinner = new Spinner("Planning...").start();
-    let plannerStreaming = false;
+    const planSpinner = new Spinner("Waiting for planner...").start();
+    let planStarted = false;
     const planner = await plannerAgent({
-      goal,
-      estimate,
-      files,
-      projectDoc,
-      provider: config.provider,
-      model: config.model,
+      goal, estimate, files, projectDoc,
+      provider: config.provider, model: config.model,
       onToken: (t) => {
-        if (!plannerStreaming) { plannerSpinner.stop(); plannerStreaming = true; }
-        process.stdout.write(t);
+        if (!planStarted) { planSpinner.stop(); planBox.open(); planStarted = true; }
+        planBox.write(t);
       },
     });
-    if (!plannerStreaming) plannerSpinner.stop("Plan generated.");
-    else process.stdout.write("\n");
+    if (!planStarted) { planSpinner.stop(); planBox.open(); }
+    planBox.close(`${planner.latencyMs}ms`);
     plan = planner.content;
     saveModelRun(db, missionId, "planner", config, planner);
   }
@@ -275,82 +288,70 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     completedIterations = iteration;
 
-    // Re-plan with feedback if not the first iteration
+    // Re-plan with feedback (iteration > 1)
     if (iteration > 1) {
-      printAgentHeader("planner", `iteration ${iteration}/${maxIterations} · replanning`);
+      printPipeline("plan");
       updateMission(db, missionId, { status: "planning" });
+      const replanBox = new StreamingBox(
+        `◆ PLANNER  ·  iteration ${iteration}/${maxIterations}  ·  replanning`,
+        { colorFn: clr.cyan },
+      );
       const replanSpinner = new Spinner("Re-planning with feedback...").start();
-      let replanStreaming = false;
+      let replanStarted = false;
       const replanner = await plannerAgent({
-        goal,
-        estimate,
-        files,
-        projectDoc,
-        provider: config.provider,
-        model: config.model,
-        feedback,
+        goal, estimate, files, projectDoc,
+        provider: config.provider, model: config.model, feedback,
         onToken: (t) => {
-          if (!replanStreaming) { replanSpinner.stop(); replanStreaming = true; }
-          process.stdout.write(t);
+          if (!replanStarted) { replanSpinner.stop(); replanBox.open(); replanStarted = true; }
+          replanBox.write(t);
         },
       });
-      if (!replanStreaming) replanSpinner.stop("Revised plan generated.");
-      else process.stdout.write("\n");
+      if (!replanStarted) { replanSpinner.stop(); replanBox.open(); }
+      replanBox.close(`${replanner.latencyMs}ms`);
       plan = replanner.content;
       saveModelRun(db, missionId, "planner", config, replanner);
       saveStep(
-        db,
-        missionId,
-        "planner",
-        "completed",
-        config.model,
+        db, missionId, "planner", "completed", config.model,
         `${goal}\n\nFeedback from iteration ${iteration - 1}:\n${JSON.stringify(feedback)}`,
-        plan,
-        estimate.confidence,
-        null,
-        iteration,
+        plan, estimate.confidence, null, iteration,
       );
     }
 
     // Implement
-    printAgentHeader("implementer", `iteration ${iteration}/${maxIterations}`);
+    printPipeline("implement");
     updateMission(db, missionId, { status: "executing" });
-    const implSpinner = new Spinner("Implementing...").start();
-    let implStreaming = false;
+    const implBox = new StreamingBox(
+      `◆ IMPLEMENTER  ·  iteration ${iteration}/${maxIterations}`,
+      { colorFn: clr.green },
+    );
+    const implSpinner = new Spinner("Waiting for implementer...").start();
+    let implStarted = false;
     const implementer = await implementerAgent({
-      goal,
-      plan,
-      files,
-      provider: config.provider,
-      model: config.model,
+      goal, plan, files,
+      provider: config.provider, model: config.model,
       onToken: (t) => {
-        if (!implStreaming) { implSpinner.stop(); implStreaming = true; }
-        process.stdout.write(clr.dim(t));
+        if (!implStarted) { implSpinner.stop(); implBox.open(); implStarted = true; }
+        implBox.write(clr.dim(t));
       },
     });
-    if (!implStreaming) implSpinner.stop("Implementation generated.");
-    else process.stdout.write("\n");
+    if (!implStarted) { implSpinner.stop(); implBox.open(); }
+    const fCount = implementer.parsed.files.length;
+    implBox.close(
+      `${fCount} file(s) · conf ${Math.round(implementer.parsed.confidence * 100)}% · ${implementer.latencyMs}ms`,
+    );
 
     saveModelRun(db, missionId, "implementer", config, implementer);
     saveStep(
-      db,
-      missionId,
-      "implementer",
-      "completed",
-      config.model,
-      plan,
-      JSON.stringify(implementer.parsed, null, 2),
-      implementer.parsed.confidence,
-      null,
-      iteration,
+      db, missionId, "implementer", "completed", config.model,
+      plan, JSON.stringify(implementer.parsed, null, 2),
+      implementer.parsed.confidence, null, iteration,
     );
     lastImplementer = implementer;
 
-    const fileCount = implementer.parsed.files.length;
-    if (fileCount > 0) {
-      printInfo(
-        `${fileCount} file(s) proposed: ${implementer.parsed.files.map((f) => f.path).join(", ")}`,
-      );
+    if (fCount > 0) {
+      for (const f of implementer.parsed.files) {
+        printInfo(clr.dim(`  + ${f.path}`));
+      }
     }
 
     db.prepare("DELETE FROM patches WHERE mission_id = ? AND applied = 0").run(missionId);
@@ -362,23 +363,26 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     }
 
     // Review
-    printAgentHeader("reviewer", `iteration ${iteration}/${maxIterations}`);
+    printPipeline("review");
     updateMission(db, missionId, { status: "reviewing" });
-    const reviewSpinner = new Spinner("Reviewing...").start();
-    let reviewStreaming = false;
+    const reviewBox = new StreamingBox(
+      `◆ REVIEWER  ·  iteration ${iteration}/${maxIterations}`,
+      { colorFn: clr.yellow },
+    );
+    const reviewSpinner = new Spinner("Waiting for reviewer...").start();
+    let reviewStarted = false;
     const reviewer = await reviewerAgent({
-      goal,
-      plan,
-      proposal: implementer.parsed,
-      provider: config.provider,
-      model: config.model,
+      goal, plan, proposal: implementer.parsed,
+      provider: config.provider, model: config.model,
       onToken: (t) => {
-        if (!reviewStreaming) { reviewSpinner.stop(); reviewStreaming = true; }
-        process.stdout.write(t);
+        if (!reviewStarted) { reviewSpinner.stop(); reviewBox.open(); reviewStarted = true; }
+        reviewBox.write(t);
       },
     });
-    if (!reviewStreaming) reviewSpinner.stop("Review complete.");
-    else process.stdout.write("\n");
+    if (!reviewStarted) { reviewSpinner.stop(); reviewBox.open(); }
+    reviewBox.close(
+      `score ${reviewer.parsed.score}/10 · ${reviewer.parsed.approved ? "APPROVED" : "REJECTED"} · ${reviewer.latencyMs}ms`,
+    );
 
     saveModelRun(db, missionId, "reviewer", config, reviewer);
     saveStep(
@@ -404,14 +408,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     }
 
     feedback = { issues: reviewer.parsed.issues, fixes: reviewer.parsed.fixes };
-    printWarn(
-      `Iteration ${iteration} rejected — score ${reviewer.parsed.score}/10.${iteration < maxIterations ? " Retrying with feedback." : ""}`,
-    );
-    if (feedback.issues.length) {
-      for (const issue of feedback.issues.slice(0, 3)) {
-        console.log(`  ${clr.dim("·")} ${clr.dim(issue)}`);
-      }
-    }
+    printRejectionBox(iteration, maxIterations, reviewer.parsed.score, feedback.issues, feedback.fixes);
   }
 
   // ── Post-loop ─────────────────────────────────────────────────────────────
@@ -427,9 +424,35 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     return;
   }
 
-  const applyResult = applyPatches(db, workspace, missionId, mode);
-  if (mode === "full-auto") {
-    await runCommands(db, workspace, missionId, lastImplementer.parsed.commands);
+  printPipeline("apply");
+
+  let applyResult = { applied: 0, blocked: 0 };
+
+  if (mode === "review") {
+    const patchPaths = lastImplementer.parsed.files.map((f) => f.path);
+    const decision = await askApproval(patchPaths);
+    if (decision === "diff") {
+      const diffs = getMissionDiff(db, workspace, missionId);
+      for (const d of diffs) {
+        if (d.blockedReason) printWarn(`Blocked: ${d.blockedReason}`);
+        console.log(unifiedDiff(d.path, d.before, d.after));
+      }
+      printInfo("Patches saved — run `apollo diff` to review or re-run to apply.");
+    } else if (decision === "apply") {
+      applyResult = applyPatches(db, workspace, missionId, mode);
+      printSuccess(`Applied ${applyResult.applied} file(s).`);
+    } else if (decision === "reject") {
+      db.prepare("DELETE FROM patches WHERE mission_id = ? AND applied = 0").run(missionId);
+      printWarn("Changes rejected and discarded.");
+    } else {
+      printWarn("Aborted. Patches saved — run `apollo diff` to review later.");
+    }
+  } else {
+    applyResult = applyPatches(db, workspace, missionId, mode);
+    if (mode === "full-auto") {
+      await runCommands(db, workspace, missionId, lastImplementer.parsed.commands);
+    }
+    printSuccess(`Mission complete. ${applyResult.applied} file(s) applied.`);
   }
 
   const learned = reflection(goal, estimate, lastImplementer.parsed, lastReviewer.parsed);
@@ -438,12 +461,6 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
   ).run(newId("mem"), `mission:${missionId}`, JSON.stringify(learned), "reflection", 2, nowIso());
 
   updateMission(db, missionId, { status: "completed", completed_at: nowIso() });
-
-  if (mode === "review") {
-    printSuccess("Review complete. Patches ready — run apollo diff, then apollo rollback/apply.");
-  } else {
-    printSuccess(`Mission complete. ${applyResult.applied} file(s) applied.`);
-  }
   printMissionSummary(missionId, estimate, cost, applyResult, learned, completedIterations);
 }
 
