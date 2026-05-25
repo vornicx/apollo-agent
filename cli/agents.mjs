@@ -36,7 +36,7 @@ export function makeStaticPlan({ goal, estimate, files }) {
   ].join("\n");
 }
 
-export async function plannerAgent({ goal, estimate, files, projectDoc, provider, model, feedback }) {
+export async function plannerAgent({ goal, estimate, files, projectDoc, provider, model, feedback, onToken }) {
   const feedbackBlock = feedback?.issues?.length
     ? [
         "",
@@ -56,6 +56,7 @@ export async function plannerAgent({ goal, estimate, files, projectDoc, provider
   const result = await callModel({
     provider,
     model,
+    onToken,
     messages: [
       { role: "system", content: `${CONSTITUTION}\n\nYou are Apollo Planner. Do not edit files.` },
       {
@@ -78,10 +79,11 @@ export async function plannerAgent({ goal, estimate, files, projectDoc, provider
   return result;
 }
 
-export async function implementerAgent({ goal, plan, files, provider, model }) {
+export async function implementerAgent({ goal, plan, files, provider, model, onToken }) {
   const result = await callModel({
     provider,
     model,
+    onToken,
     messages: [
       {
         role: "system",
@@ -123,10 +125,11 @@ Never include .env, .git, node_modules, dist, build output, or secret files.`,
   };
 }
 
-export async function reviewerAgent({ goal, plan, proposal, provider, model }) {
+export async function reviewerAgent({ goal, plan, proposal, provider, model, onToken }) {
   const result = await callModel({
     provider,
     model,
+    onToken,
     messages: [
       {
         role: "system",

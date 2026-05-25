@@ -21,7 +21,12 @@ export function checkKeys() {
   }));
 }
 
-export async function callModel({ provider = DEFAULT_PROVIDER, model = DEFAULT_MODEL, messages }) {
+export async function callModel({
+  provider = DEFAULT_PROVIDER,
+  model = DEFAULT_MODEL,
+  messages,
+  onToken = null,
+}) {
   if (provider !== "openrouter") {
     throw new Error(`Apollo CLI v1 supports OpenRouter execution first. Unsupported: ${provider}`);
   }
@@ -32,6 +37,8 @@ export async function callModel({ provider = DEFAULT_PROVIDER, model = DEFAULT_M
     );
   }
   const started = Date.now();
+  const useStream = typeof onToken === "function";
+
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -44,16 +51,58 @@ export async function callModel({ provider = DEFAULT_PROVIDER, model = DEFAULT_M
       model,
       messages,
       temperature: 0.2,
+      stream: useStream,
     }),
   });
-  const text = await response.text();
+
   if (!response.ok) {
-    throw new Error(`OpenRouter error ${response.status}: ${text.slice(0, 500)}`);
+    const errText = await response.text();
+    throw new Error(`OpenRouter error ${response.status}: ${errText.slice(0, 500)}`);
   }
-  const body = JSON.parse(text);
-  return {
-    content: body.choices?.[0]?.message?.content ?? "",
-    latencyMs: Date.now() - started,
-    usage: body.usage ?? {},
-  };
+
+  if (!useStream) {
+    const body = JSON.parse(await response.text());
+    return {
+      content: body.choices?.[0]?.message?.content ?? "",
+      latencyMs: Date.now() - started,
+      usage: body.usage ?? {},
+    };
+  }
+
+  return readSSEStream(response.body, onToken, started);
+}
+
+async function readSSEStream(body, onToken, started) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, idx).replace(/\r$/, "");
+        buffer = buffer.slice(idx + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(payload);
+          const token = chunk.choices?.[0]?.delta?.content ?? "";
+          if (token) {
+            content += token;
+            onToken(token);
+          }
+        } catch { /* malformed chunk — skip */ }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return { content, latencyMs: Date.now() - started, usage: {} };
 }

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { APOLLO_DIR } from "./constants.mjs";
 import { appendJsonl } from "./workspace.mjs";
 import { insertEvent } from "./db.mjs";
+import { printProgress as uiProgress } from "./ui.mjs";
 
 export function recordEvent(db, workspace, missionId, event) {
   const row = insertEvent(db, missionId, event);
@@ -12,8 +13,7 @@ export function recordEvent(db, workspace, missionId, event) {
 }
 
 export function printProgress(progress, message) {
-  const pct = String(Math.max(0, Math.min(100, progress))).padStart(3, " ");
-  console.log(`[${pct}%] ${message}`);
+  uiProgress(progress, message);
 }
 
 export function recordProgress(db, workspace, missionId, progress, message, metadata = {}) {

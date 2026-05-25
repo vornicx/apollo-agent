@@ -25,6 +25,18 @@ import {
   reviewerAgent,
 } from "./agents.mjs";
 import { runAllowedCommand } from "./commands.mjs";
+import {
+  Spinner,
+  clr,
+  printAgentHeader,
+  printBanner,
+  printError,
+  printInfo,
+  printMissionSummary,
+  printSuccess,
+  printWarn,
+  statusIcon,
+} from "./ui.mjs";
 
 export async function main(argv) {
   if (argv.length === 0) return shellCommand();
@@ -90,15 +102,18 @@ function doctorCommand() {
   const workspace = getWorkspace();
   const hasProject = existsSync(join(workspace, APOLLO_DIR, "apollo.db"));
   const sqliteOk = checkSqlite();
-  console.log("Apollo doctor");
-  console.log(`- Node: ${process.version}`);
-  console.log(`- SQLite: ${sqliteOk ? "ok" : "missing"}`);
-  console.log(`- Project initialized: ${hasProject ? "yes" : "no"}`);
-  console.log(`- APOLLO.md: ${existsSync(join(workspace, "APOLLO.md")) ? "yes" : "no"}`);
-  console.log(`- .apolloignore: ${existsSync(join(workspace, ".apolloignore")) ? "yes" : "no"}`);
+  const ok = (v) => v ? clr.green("✓") : clr.red("✗");
+  console.log(`\n${clr.bold("▲ APOLLO doctor")}\n`);
+  console.log(`  ${ok(true)}  Node ${process.version}`);
+  console.log(`  ${ok(sqliteOk)}  SQLite ${sqliteOk ? "built-in" : "missing"}`);
+  console.log(`  ${ok(hasProject)}  Project initialized`);
+  console.log(`  ${ok(existsSync(join(workspace, "APOLLO.md")))}  APOLLO.md`);
+  console.log(`  ${ok(existsSync(join(workspace, ".apolloignore")))}  .apolloignore`);
+  console.log("");
   for (const key of checkKeys()) {
-    console.log(`- ${key.env}: ${key.present ? "present" : "missing"}`);
+    console.log(`  ${ok(key.present)}  ${key.env}`);
   }
+  console.log("");
   if (!sqliteOk) process.exitCode = 1;
 }
 
@@ -116,12 +131,18 @@ function statusCommand() {
     )
     .all();
   if (rows.length === 0) {
-    console.log("No Apollo missions yet.");
+    printInfo("No Apollo missions yet. Run: apollo run \"your goal\"");
     return;
   }
+  console.log("");
   for (const row of rows) {
-    console.log(`${row.id}  ${row.status.padEnd(11)} ${row.mode.padEnd(9)} ${row.goal}`);
+    const icon = statusIcon(row.status);
+    const id = clr.dim(row.id.slice(0, 18));
+    const mode = clr.dim(row.mode.padEnd(9));
+    const goal = row.goal.length > 60 ? row.goal.slice(0, 57) + "..." : row.goal;
+    console.log(`  ${icon}  ${id}  ${mode}  ${goal}`);
   }
+  console.log("");
 }
 
 async function runCommand(args) {
@@ -162,8 +183,12 @@ async function runCommand(args) {
 const DEFAULT_MAX_ITERATIONS = 3;
 
 async function executeMission({ db, workspace, config, missionId, goal, mode }) {
-  recordProgress(db, workspace, missionId, 5, "Classifying mission...");
+  const classifySpinner = new Spinner("Classifying mission...").start();
   const estimate = await estimateMissionSemantic(goal, process.env.GROQ_API_KEY);
+  classifySpinner.stop(
+    `${clr.bold(estimate.route)} · ${estimate.complexity} · risk: ${estimate.risk}${estimate.intent ? `  ${clr.dim(estimate.intent)}` : ""}`,
+  );
+  recordEvent(db, workspace, missionId, { type: "progress", message: "Mission classified.", progress: 5 });
   const cost = estimateCost(goal, estimate, config.model);
   updateMission(db, missionId, {
     status: "planning",
@@ -189,27 +214,31 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     nowIso(),
   );
 
-  console.log(`Mission: ${missionId}`);
-  console.log(`Mode: ${mode}`);
-  console.log(`Route: ${estimate.route}`);
-  console.log(`Estimated cost: $${cost.estimatedCost}`);
+  printSuccess(`${clr.bold(estimate.route)} · ${estimate.complexity} · $${cost.estimatedCost}`);
+  printInfo(`Mission ${clr.dim(missionId)}  mode: ${clr.bold(mode)}`);
 
   const files = listWorkspaceFiles(workspace);
   const projectDoc = readProjectDoc(workspace);
 
-  recordProgress(db, workspace, missionId, 25, "Planning mission...");
+  // ── Initial plan (iteration 1) ──────────────────────────────────────────────
+  printAgentHeader("planner", "iteration 1");
   let plan;
   if (mode === "plan" || !process.env.OPENROUTER_API_KEY) {
     plan = makeStaticPlan({ goal, estimate, files });
     if (mode !== "plan") {
+      printWarn("OPENROUTER_API_KEY missing — local plan only.");
       recordEvent(db, workspace, missionId, {
         level: "warn",
         type: "provider_missing",
         message: "OPENROUTER_API_KEY missing. Apollo produced a local plan only.",
         progress: 25,
       });
+    } else {
+      console.log(plan);
     }
   } else {
+    const plannerSpinner = new Spinner("Planning...").start();
+    let plannerStreaming = false;
     const planner = await plannerAgent({
       goal,
       estimate,
@@ -217,7 +246,13 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
       projectDoc,
       provider: config.provider,
       model: config.model,
+      onToken: (t) => {
+        if (!plannerStreaming) { plannerSpinner.stop(); plannerStreaming = true; }
+        process.stdout.write(t);
+      },
     });
+    if (!plannerStreaming) plannerSpinner.stop("Plan generated.");
+    else process.stdout.write("\n");
     plan = planner.content;
     saveModelRun(db, missionId, "planner", config, planner);
   }
@@ -225,28 +260,27 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
 
   if (mode === "plan" || !process.env.OPENROUTER_API_KEY) {
     updateMission(db, missionId, { status: "completed", completed_at: nowIso() });
-    recordProgress(db, workspace, missionId, 100, "Plan complete. No files were modified.");
-    console.log(`\n${plan}`);
+    printSuccess("Plan complete. No files were modified.");
     return;
   }
 
+  // ── Iteration loop ────────────────────────────────────────────────────────
   const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let feedback = null;
   let lastImplementer = null;
   let lastReviewer = null;
   let approved = false;
+  let completedIterations = 1;
 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
+    completedIterations = iteration;
+
+    // Re-plan with feedback if not the first iteration
     if (iteration > 1) {
-      const progressPct = 25 + Math.round(((iteration - 1) / maxIterations) * 15);
-      recordProgress(
-        db,
-        workspace,
-        missionId,
-        progressPct,
-        `Re-planning (iteration ${iteration}/${maxIterations})...`,
-      );
+      printAgentHeader("planner", `iteration ${iteration}/${maxIterations} · replanning`);
       updateMission(db, missionId, { status: "planning" });
+      const replanSpinner = new Spinner("Re-planning with feedback...").start();
+      let replanStreaming = false;
       const replanner = await plannerAgent({
         goal,
         estimate,
@@ -255,7 +289,13 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
         provider: config.provider,
         model: config.model,
         feedback,
+        onToken: (t) => {
+          if (!replanStreaming) { replanSpinner.stop(); replanStreaming = true; }
+          process.stdout.write(t);
+        },
       });
+      if (!replanStreaming) replanSpinner.stop("Revised plan generated.");
+      else process.stdout.write("\n");
       plan = replanner.content;
       saveModelRun(db, missionId, "planner", config, replanner);
       saveStep(
@@ -272,22 +312,25 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
       );
     }
 
-    const implProgress = 45 + Math.round(((iteration - 1) / maxIterations) * 20);
-    recordProgress(
-      db,
-      workspace,
-      missionId,
-      implProgress,
-      `Executing mission proposal (iteration ${iteration}/${maxIterations})...`,
-    );
+    // Implement
+    printAgentHeader("implementer", `iteration ${iteration}/${maxIterations}`);
     updateMission(db, missionId, { status: "executing" });
+    const implSpinner = new Spinner("Implementing...").start();
+    let implStreaming = false;
     const implementer = await implementerAgent({
       goal,
       plan,
       files,
       provider: config.provider,
       model: config.model,
+      onToken: (t) => {
+        if (!implStreaming) { implSpinner.stop(); implStreaming = true; }
+        process.stdout.write(clr.dim(t));
+      },
     });
+    if (!implStreaming) implSpinner.stop("Implementation generated.");
+    else process.stdout.write("\n");
+
     saveModelRun(db, missionId, "implementer", config, implementer);
     saveStep(
       db,
@@ -303,6 +346,13 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     );
     lastImplementer = implementer;
 
+    const fileCount = implementer.parsed.files.length;
+    if (fileCount > 0) {
+      printInfo(
+        `${fileCount} file(s) proposed: ${implementer.parsed.files.map((f) => f.path).join(", ")}`,
+      );
+    }
+
     db.prepare("DELETE FROM patches WHERE mission_id = ? AND applied = 0").run(missionId);
     for (const file of implementer.parsed.files) {
       if (!file?.path || typeof file.content !== "string") continue;
@@ -311,22 +361,25 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
       ).run(newId("patch"), missionId, file.path, file.content, nowIso());
     }
 
-    const reviewProgress = 70 + Math.round(((iteration - 1) / maxIterations) * 20);
-    recordProgress(
-      db,
-      workspace,
-      missionId,
-      reviewProgress,
-      `Reviewing output (iteration ${iteration}/${maxIterations})...`,
-    );
+    // Review
+    printAgentHeader("reviewer", `iteration ${iteration}/${maxIterations}`);
     updateMission(db, missionId, { status: "reviewing" });
+    const reviewSpinner = new Spinner("Reviewing...").start();
+    let reviewStreaming = false;
     const reviewer = await reviewerAgent({
       goal,
       plan,
       proposal: implementer.parsed,
       provider: config.provider,
       model: config.model,
+      onToken: (t) => {
+        if (!reviewStreaming) { reviewSpinner.stop(); reviewStreaming = true; }
+        process.stdout.write(t);
+      },
     });
+    if (!reviewStreaming) reviewSpinner.stop("Review complete.");
+    else process.stdout.write("\n");
+
     saveModelRun(db, missionId, "reviewer", config, reviewer);
     saveStep(
       db,
@@ -344,40 +397,33 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
 
     if (reviewer.parsed.approved && reviewer.parsed.score >= 7) {
       approved = true;
+      printSuccess(
+        `Approved — score ${reviewer.parsed.score}/10 · confidence ${Math.round(reviewer.parsed.confidence * 100)}%`,
+      );
       break;
     }
 
     feedback = { issues: reviewer.parsed.issues, fixes: reviewer.parsed.fixes };
-    const issuesSummary = reviewer.parsed.issues.slice(0, 3).join("; ");
-    recordProgress(
-      db,
-      workspace,
-      missionId,
-      reviewProgress + 2,
-      `Iteration ${iteration} rejected (score ${reviewer.parsed.score}/10).${iteration < maxIterations ? " Retrying with feedback." : ""}`,
+    printWarn(
+      `Iteration ${iteration} rejected — score ${reviewer.parsed.score}/10.${iteration < maxIterations ? " Retrying with feedback." : ""}`,
     );
-    console.log(
-      `Iteration ${iteration}/${maxIterations} rejected. Score: ${reviewer.parsed.score}/10`,
-    );
-    if (issuesSummary) console.log(`Issues: ${issuesSummary}`);
+    if (feedback.issues.length) {
+      for (const issue of feedback.issues.slice(0, 3)) {
+        console.log(`  ${clr.dim("·")} ${clr.dim(issue)}`);
+      }
+    }
   }
 
+  // ── Post-loop ─────────────────────────────────────────────────────────────
   if (!approved) {
     updateMission(db, missionId, { status: "max_iterations_reached" });
-    recordProgress(
-      db,
-      workspace,
-      missionId,
-      100,
-      `Max iterations (${maxIterations}) reached without approval. Last score: ${lastReviewer?.parsed.score ?? 0}/10.`,
+    printWarn(
+      `Max iterations (${maxIterations}) reached. Last score: ${lastReviewer?.parsed.score ?? 0}/10.`,
     );
-    console.log(`\nMax iterations (${maxIterations}) reached without approval.`);
-    console.log(
-      `Last score: ${lastReviewer?.parsed.score ?? 0}/10. Run apollo diff to inspect patches.`,
-    );
+    printInfo("Run apollo diff to inspect the last proposal.");
     const emptyApply = { applied: 0, blocked: 0 };
     const learned = reflection(goal, estimate, lastImplementer?.parsed, lastReviewer?.parsed);
-    printMissionSummary(missionId, estimate, cost, emptyApply, learned);
+    printMissionSummary(missionId, estimate, cost, emptyApply, learned, completedIterations);
     return;
   }
 
@@ -392,16 +438,13 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
   ).run(newId("mem"), `mission:${missionId}`, JSON.stringify(learned), "reflection", 2, nowIso());
 
   updateMission(db, missionId, { status: "completed", completed_at: nowIso() });
-  recordProgress(
-    db,
-    workspace,
-    missionId,
-    100,
-    mode === "review"
-      ? "Review complete. Patches are ready but not applied."
-      : `Mission complete. Applied ${applyResult.applied} file change(s).`,
-  );
-  printMissionSummary(missionId, estimate, cost, applyResult, learned);
+
+  if (mode === "review") {
+    printSuccess("Review complete. Patches ready — run apollo diff, then apollo rollback/apply.");
+  } else {
+    printSuccess(`Mission complete. ${applyResult.applied} file(s) applied.`);
+  }
+  printMissionSummary(missionId, estimate, cost, applyResult, learned, completedIterations);
 }
 
 function diffCommand(missionId) {
@@ -410,11 +453,11 @@ function diffCommand(missionId) {
   if (!id) throw new Error("No mission found.");
   const diffs = getMissionDiff(db, workspace, id);
   if (diffs.length === 0) {
-    console.log(`No proposed file changes for ${id}.`);
+    printInfo(`No proposed file changes for ${id}.`);
     return;
   }
   for (const diff of diffs) {
-    if (diff.blockedReason) console.log(`# Blocked: ${diff.blockedReason}`);
+    if (diff.blockedReason) printWarn(`Blocked: ${diff.blockedReason}`);
     console.log(unifiedDiff(diff.path, diff.before, diff.after));
   }
 }
@@ -424,7 +467,7 @@ function rollbackCommand(missionId) {
   const id = missionId ?? latestMissionId(db);
   if (!id) throw new Error("No mission found.");
   const result = rollbackMission(db, workspace, id);
-  console.log(`Rolled back ${result.restored} file(s) for ${id}.`);
+  printSuccess(`Rolled back ${result.restored} file(s) for ${clr.dim(id)}.`);
 }
 
 function resumeCommand(missionId) {
@@ -433,9 +476,9 @@ function resumeCommand(missionId) {
   if (!id) throw new Error("No mission found.");
   const row = db.prepare("SELECT * FROM missions WHERE id = ?").get(id);
   if (!row) throw new Error(`Mission not found: ${id}`);
-  console.log(`${row.id}: ${row.status}`);
-  console.log(row.goal);
-  console.log("Apollo v1 resume is audit-first: inspect with `apollo diff`, then rerun if needed.");
+  console.log(`${statusIcon(row.status)} ${clr.bold(row.status)}  ${clr.dim(row.id)}`);
+  console.log(`  ${row.goal}`);
+  printInfo('Inspect with "apollo diff", then rerun if needed.');
 }
 
 function configCommand(args) {
@@ -601,16 +644,6 @@ function tokenize(line) {
   return tokens;
 }
 
-function printMissionSummary(missionId, estimate, cost, applyResult, learned) {
-  console.log("");
-  console.log(`Apollo Mission ${missionId}`);
-  console.log(`- Complexity: ${estimate.complexity}`);
-  console.log(`- Confidence: ${Math.round(estimate.confidence * 100)}%`);
-  console.log(`- Estimated cost: $${cost.estimatedCost}`);
-  console.log(`- Files applied: ${applyResult.applied}`);
-  console.log(`- Apollo learned: ${learned.future_strategy}`);
-}
-
 function checkSqlite() {
   try {
     return Boolean(process.versions.node);
@@ -620,36 +653,33 @@ function checkSqlite() {
 }
 
 function help() {
-  console.log(`Apollo CLI
+  const cmd = (c) => clr.bold(c);
+  const dim = clr.dim;
+  console.log(`
+${clr.bold(clr.cyan("▲ APOLLO"))} ${dim("— local-first mission control")}
 
-Commands:
-  apollo                         open interactive Apollo shell
-  apollo shell                   open interactive Apollo shell
-  apollo init
-  apollo run "goal" --mode plan|review|auto|full-auto
-  apollo status
-  apollo diff [mission-id]
-  apollo rollback [mission-id]
-  apollo resume [mission-id]
-  apollo doctor
-  apollo keys check
-  apollo config
-  apollo config set <key> <value>
-`);
-}
+${clr.bold("Usage")}
+  apollo                          ${dim("open interactive shell")}
+  apollo run ${dim('"goal"')} ${dim("--mode")} <mode>     ${dim("execute a mission")}
+  apollo status                   ${dim("show recent missions")}
+  apollo diff ${dim("[mission-id]")}         ${dim("inspect proposed changes")}
+  apollo rollback ${dim("[mission-id]")}     ${dim("undo file mutations")}
+  apollo resume ${dim("[mission-id]")}       ${dim("check mission state")}
+  apollo init                     ${dim("initialize project")}
+  apollo doctor                   ${dim("diagnose setup")}
+  apollo keys check               ${dim("verify API keys")}
+  apollo config                   ${dim("show config")}
+  apollo config set <key> <val>   ${dim("update config")}
 
-function printBanner() {
-  console.log(`APOLLO CLI
-Local-first mission control
+${clr.bold("Modes")}
+  ${cmd("plan")}       ${dim("plan only, no file changes")}
+  ${cmd("review")}     ${dim("plan + implement, manual apply")}
+  ${cmd("auto")}       ${dim("full loop with CRITIC→PLANNER feedback")}
+  ${cmd("full-auto")}  ${dim("auto + run validation commands")}
 
-Type a command, or type any goal to run it as a mission.
-Examples:
-  init
-  run "summarize this repo" --mode plan
-  status
-  diff
-  rollback
-  doctor
-  exit
+${clr.bold("Examples")}
+  apollo run ${dim('"add /health endpoint"')} --mode auto
+  apollo run ${dim('"refactor auth module"')} --mode review
+  apollo config set maxIterations 5
 `);
 }
