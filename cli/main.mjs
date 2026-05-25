@@ -12,7 +12,7 @@ import {
   readProjectDoc,
   writeConfig,
 } from "./workspace.mjs";
-import { estimateCost, estimateMissionSemantic } from "./routing.mjs";
+import { estimateCost, estimateMissionSemantic, isQuestion, routeModel, suggestMode } from "./routing.mjs";
 import { recordEvent, recordProgress } from "./events.mjs";
 import { checkKeys } from "./providers.mjs";
 import { applyPatches, getMissionDiff, rollbackMission } from "./checkpoints.mjs";
@@ -166,16 +166,41 @@ async function runCommand(args) {
   const parsed = parseRunArgs(args);
   const workspace = getWorkspace();
   ensureApolloProject(workspace);
-  const db = openApolloDb(workspace);
   const config = readConfig(workspace);
+
+  // Fast classification — informs both mode suggestion and model selection
+  const classifySpinner = new Spinner("Classifying...").start();
+  const estimate = await estimateMissionSemantic(parsed.goal, process.env.GROQ_API_KEY);
+  classifySpinner.stop(
+    `${clr.bold(estimate.complexity)} · risk: ${estimate.risk} · conf ${Math.round((estimate.confidence ?? 0.8) * 100)}%${estimate.intent ? `  ${clr.dim(estimate.intent)}` : ""}`,
+  );
+
+  // Mode selection
   let mode = parsed.mode ?? config.defaultMode;
   if (!mode) {
-    const picked = await pickMode();
-    if (!picked) { printInfo("Cancelled."); return; }
-    mode = picked;
+    const suggested = suggestMode(parsed.goal, estimate);
+    if (suggested === "chat") {
+      printInfo(`Detected question — routing to ${clr.bold("chat")}`);
+      mode = "chat";
+    } else {
+      mode = await pickMode(suggested);
+    }
   }
+  if (!mode) { printInfo("Cancelled."); return; }
   if (mode === "chat") return chatCommand(parsed.goal);
   if (!VALID_MODES.has(mode)) throw new Error(`Invalid mode: ${mode}`);
+
+  // Model selection — auto-routes by complexity when model = "auto"
+  const explicitModel = parsed.model ?? (config.model !== "auto" ? config.model : null);
+  let resolvedModel = explicitModel;
+  if (!resolvedModel) {
+    const routed = routeModel(estimate);
+    resolvedModel = routed.model;
+    printInfo(`Model: ${clr.bold(routed.label)}  ${clr.dim(`(auto · ${routed.tier} tier)`)}`);
+  }
+  const resolvedConfig = { ...config, model: resolvedModel };
+
+  const db = openApolloDb(workspace);
 
   const missionId = newId("mis");
   const createdAt = nowIso();
@@ -188,7 +213,7 @@ async function runCommand(args) {
   ).run(missionId, parsed.goal, "created", mode, createdAt, createdAt);
 
   try {
-    await executeMission({ db, workspace, config, missionId, goal: parsed.goal, mode });
+    await executeMission({ db, workspace, config: resolvedConfig, missionId, goal: parsed.goal, mode, estimate });
   } catch (error) {
     updateMission(db, missionId, { status: "failed" });
     recordEvent(db, workspace, missionId, {
@@ -205,12 +230,15 @@ async function runCommand(args) {
 
 const DEFAULT_MAX_ITERATIONS = 3;
 
-async function executeMission({ db, workspace, config, missionId, goal, mode }) {
-  const classifySpinner = new Spinner("Classifying mission...").start();
-  const estimate = await estimateMissionSemantic(goal, process.env.GROQ_API_KEY);
-  classifySpinner.stop(
-    `${clr.bold(estimate.route)} · ${estimate.complexity} · risk: ${estimate.risk}${estimate.intent ? `  ${clr.dim(estimate.intent)}` : ""}`,
-  );
+async function executeMission({ db, workspace, config, missionId, goal, mode, estimate: preEstimate }) {
+  let estimate = preEstimate;
+  if (!estimate) {
+    const classifySpinner = new Spinner("Classifying mission...").start();
+    estimate = await estimateMissionSemantic(goal, process.env.GROQ_API_KEY);
+    classifySpinner.stop(
+      `${clr.bold(estimate.complexity)} · risk: ${estimate.risk}${estimate.intent ? `  ${clr.dim(estimate.intent)}` : ""}`,
+    );
+  }
   recordEvent(db, workspace, missionId, { type: "progress", message: "Mission classified.", progress: 5 });
   const cost = estimateCost(goal, estimate, config.model);
   updateMission(db, missionId, {
@@ -237,7 +265,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
     nowIso(),
   );
 
-  printSuccess(`${clr.bold(estimate.route)} · ${estimate.complexity} · $${cost.estimatedCost}`);
+  printSuccess(`${estimate.complexity} · risk: ${estimate.risk} · $${cost.estimatedCost}  ${clr.dim(config.model)}`);
   printInfo(`Mission ${clr.dim(missionId)}  mode: ${clr.bold(mode)}`);
 
   const files = listWorkspaceFiles(workspace);
@@ -640,6 +668,9 @@ function parseRunArgs(args) {
     if (arg === "--mode") {
       flags.mode = args[i + 1];
       i += 1;
+    } else if (arg === "--model") {
+      flags.model = args[i + 1];
+      i += 1;
     } else {
       goalParts.push(arg);
     }
@@ -735,8 +766,11 @@ ${clr.bold("Modes")}
   ${cmd("full-auto")}  ${dim("auto + run validation commands")}
 
 ${clr.bold("Examples")}
-  apollo run ${dim('"add /health endpoint"')} --mode auto
+  apollo run ${dim('"add /health endpoint"')}
   apollo run ${dim('"refactor auth module"')} --mode review
+  apollo run ${dim('"add payment flow"')} --model ${dim("anthropic/claude-opus-4-5")}
+  apollo chat ${dim('"how does the auth flow work?"')}
+  apollo config set model ${dim("auto")}
   apollo config set maxIterations 5
 `);
 }

@@ -164,6 +164,45 @@ Return ONLY valid JSON:
   };
 }
 
+const APOLLO_CAPABILITIES = `
+## Apollo capabilities
+
+Commands:
+  apollo                          open interactive shell
+  apollo run "goal"               execute a mission (shows mode picker)
+  apollo run "goal" --mode plan   plan only, no file changes
+  apollo run "goal" --mode review plan + implement + manual apply gate (y/d/n/q)
+  apollo run "goal" --mode auto   full CRITIC→PLANNER feedback loop, up to 3 iterations
+  apollo run "goal" --mode full-auto  auto + runs validation commands
+  apollo run "goal" --model anthropic/claude-3.5-sonnet  override model
+  apollo chat "question"          ask a question about the project
+  apollo status                   show recent missions
+  apollo diff [mission-id]        inspect proposed file changes
+  apollo rollback [mission-id]    undo applied changes
+  apollo resume [mission-id]      check mission state
+  apollo init                     initialize project (creates APOLLO.md, .apollo/apollo.db)
+  apollo doctor                   verify setup (Node, SQLite, API keys)
+  apollo keys check               list which API keys are present
+  apollo config                   show current config
+  apollo config set key value     update config (e.g. maxIterations, defaultMode, model)
+
+Model auto-routing:
+  When model="auto" (default), Apollo picks the model by task complexity:
+  - simple + low risk  → Llama 3.1 8B    (fast, cheap)
+  - simple             → Gemini Flash 1.5  (fast, cheap)
+  - standard           → GPT-4o mini      (balanced)
+  - complex            → Claude 3.5 Sonnet (high quality)
+  - critical           → Claude Opus 4.5  (most capable)
+
+Intent detection:
+  Apollo detects questions and routes them to chat automatically.
+  It detects complexity/risk and pre-selects the safest mode in the picker.
+
+Feedback loop (auto/full-auto modes):
+  reviewer returns approved=false → planner gets issues+fixes injected → retry
+  Up to maxIterations (default: 3). Status "max_iterations_reached" if exhausted.
+`.trim();
+
 export async function chatAgent({ question, files, projectDoc, provider, model, onToken }) {
   const result = await callModel({
     provider,
@@ -175,8 +214,10 @@ export async function chatAgent({ question, files, projectDoc, provider, model, 
         content: `${CONSTITUTION}
 
 You are Apollo Chat — a project-aware assistant.
-Answer questions about the codebase, architecture, and decisions concisely.
-Do not write file patches or propose changes. If the user wants to implement something, suggest they use "apollo run".`,
+Answer questions about the codebase, architecture, decisions, and Apollo itself concisely.
+Do not write file patches. If the user wants to implement something, suggest: apollo run "<goal>"
+
+${APOLLO_CAPABILITIES}`,
       },
       {
         role: "user",

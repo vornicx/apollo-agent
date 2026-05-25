@@ -7,11 +7,11 @@ export const APOLLO_IGNORE = ".apolloignore";
 export const VALID_MODES = new Set(["plan", "review", "auto", "full-auto"]);
 
 export const DEFAULT_PROVIDER = "openrouter";
-export const DEFAULT_MODEL = "openrouter/owl-alpha";
+export const DEFAULT_MODEL = "auto";
 
 export const DEFAULT_CONFIG = {
   version: 1,
-  defaultMode: "review",
+  defaultMode: null,
   provider: DEFAULT_PROVIDER,
   model: DEFAULT_MODEL,
   maxEstimatedCost: 0.25,

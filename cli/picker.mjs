@@ -10,14 +10,15 @@ export const MODES = [
   { value: "chat",      label: "chat",      desc: "ask Apollo about the project" },
 ];
 
-export async function pickMode() {
-  return pick("Select mode", MODES);
+export async function pickMode(suggested = null) {
+  const defaultIdx = Math.max(0, suggested ? MODES.findIndex((m) => m.value === suggested) : 0);
+  return pick("Select mode", MODES, defaultIdx);
 }
 
-export async function pick(title, items) {
+export async function pick(title, items, defaultIdx = 0) {
   if (!IS_TTY) return items[0].value;
 
-  let idx = 0;
+  let idx = Math.min(defaultIdx, items.length - 1);
   let drawnLines = 0;
 
   function renderLines() {

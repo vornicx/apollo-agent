@@ -252,8 +252,9 @@ export async function startupAnimation(workspace, config) {
 
   await sleep(60);
   const cwd = workspace.replace(process.env.HOME ?? "", "~");
+  const modelLabel = config.model === "auto" || !config.model ? "auto (routes by complexity)" : config.model;
   console.log(`  ${clr.dim("Workspace")}  ${cwd}`);
-  console.log(`  ${clr.dim("Provider")}   ${config.provider} · ${clr.dim(config.model)}`);
+  console.log(`  ${clr.dim("Provider")}   ${config.provider} · ${clr.dim(modelLabel)}`);
 
   // Mode hints
   console.log("");

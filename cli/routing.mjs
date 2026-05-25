@@ -1,3 +1,65 @@
+// ── Intent detection ──────────────────────────────────────────────────────────
+
+const QUESTION_RE = /^(what|how|why|when|where|who|explain|tell|describe|list|show|can you|is there|are there|does|do you|could|would|help me understand|what's|how's)\b/i;
+
+export function isQuestion(goal) {
+  const g = goal.trim();
+  return QUESTION_RE.test(g) || g.endsWith("?");
+}
+
+export function suggestMode(goal, estimate) {
+  if (isQuestion(goal)) return "chat";
+  const { complexity, risk } = estimate;
+  if (complexity === "critical" || risk === "high") return "review";
+  if (complexity === "simple" && risk !== "high") return "auto";
+  return "review";
+}
+
+// ── Model tiers ───────────────────────────────────────────────────────────────
+// Ordered fastest→smartest. routeModel() picks the first tier that matches.
+
+const MODEL_TIERS = [
+  {
+    id: "nano",
+    model: "meta-llama/llama-3.1-8b-instruct",
+    label: "Llama 3.1 8B",
+    match: (c, r) => c === "simple" && r === "low",
+  },
+  {
+    id: "mini",
+    model: "google/gemini-flash-1.5",
+    label: "Gemini Flash 1.5",
+    match: (c) => c === "simple",
+  },
+  {
+    id: "standard",
+    model: "openai/gpt-4o-mini",
+    label: "GPT-4o mini",
+    match: (c) => c === "standard",
+  },
+  {
+    id: "smart",
+    model: "anthropic/claude-3.5-sonnet",
+    label: "Claude 3.5 Sonnet",
+    match: (c) => c === "complex",
+  },
+  {
+    id: "frontier",
+    model: "anthropic/claude-opus-4-5",
+    label: "Claude Opus 4.5",
+    match: (c) => c === "critical",
+  },
+];
+
+export function routeModel(estimate) {
+  const { complexity, risk } = estimate;
+  const tier =
+    MODEL_TIERS.find((t) => t.match(complexity, risk)) ??
+    MODEL_TIERS.find((t) => t.match(complexity)) ??
+    MODEL_TIERS[2];
+  return { model: tier.model, label: tier.label, tier: tier.id };
+}
+
 export function estimateMission(goal) {
   const normalized = goal.toLowerCase();
   const words = normalized.split(/\s+/).filter(Boolean).length;
