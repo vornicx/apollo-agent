@@ -30,6 +30,22 @@ npm run dev
 
 Fill `.env` with your Supabase and AI provider credentials.
 
+## Apollo CLI
+
+Apollo also ships a local-first CLI runtime for project missions:
+
+```bash
+npx apollo-agent init
+npx apollo-agent run "summarize this repo" --mode plan
+npx apollo-agent run "implement the smallest safe improvement" --mode review
+npx apollo-agent diff
+npx apollo-agent rollback
+```
+
+The CLI stores local state in `.apollo/apollo.db`, creates checkpoints before file mutations, respects `.apolloignore`, and supports permission modes: `plan`, `review`, `auto`, and `full-auto`.
+
+Set `OPENROUTER_API_KEY` for model-backed execution. Without it, `--mode plan` still works offline with local routing and workspace inspection.
+
 ## Database
 
 Apply migrations from `supabase/migrations` to your Supabase project.
