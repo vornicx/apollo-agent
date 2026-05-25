@@ -25,7 +25,14 @@ export function classifyCommand(command) {
 
 export async function runAllowedCommand(command, options = {}) {
   const kind = classifyCommand(command);
-  if (kind !== "safe") {
+  const { allowNetworkCommands = true, allowDestructiveCommands = true } = options;
+
+  const blocked =
+    (kind === "destructive" && !allowDestructiveCommands) ||
+    (kind === "network" && !allowNetworkCommands) ||
+    kind === "empty";
+
+  if (blocked) {
     return {
       command,
       kind,

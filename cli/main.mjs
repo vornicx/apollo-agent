@@ -587,7 +587,7 @@ async function executeMission({ db, workspace, config, missionId, goal, mode, es
   } else {
     applyResult = applyPatches(db, workspace, missionId, mode);
     if (mode === "full-auto") {
-      await runCommands(db, workspace, missionId, lastImplementer.parsed.commands);
+      await runCommands(db, workspace, missionId, lastImplementer.parsed.commands, config);
     }
     printSuccess(`Mission complete. ${applyResult.applied} file(s) applied.`);
   }
@@ -737,9 +737,13 @@ function saveModelRun(db, missionId, stepType, config, result) {
   );
 }
 
-async function runCommands(db, workspace, missionId, commands) {
+async function runCommands(db, workspace, missionId, commands, config = {}) {
   for (const command of commands ?? []) {
-    const result = await runAllowedCommand(String(command), { cwd: workspace });
+    const result = await runAllowedCommand(String(command), {
+      cwd: workspace,
+      allowNetworkCommands: config.allowNetworkCommands ?? true,
+      allowDestructiveCommands: config.allowDestructiveCommands ?? true,
+    });
     recordEvent(db, workspace, missionId, {
       type: result.skipped ? "command_skipped" : "command_ran",
       message: result.skipped ? result.output : `${command} exited ${result.exitCode}`,

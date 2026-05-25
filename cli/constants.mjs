@@ -15,8 +15,8 @@ export const DEFAULT_CONFIG = {
   provider: DEFAULT_PROVIDER,
   model: DEFAULT_MODEL,
   maxEstimatedCost: 0.25,
-  allowNetworkCommands: false,
-  allowDestructiveCommands: false,
+  allowNetworkCommands: true,
+  allowDestructiveCommands: true,
   allowAutoSkills: true,
 };
 
