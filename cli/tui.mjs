@@ -259,8 +259,9 @@ export async function startupAnimation(workspace, config) {
   console.log("");
   const modeHints = [
     ["plan", "plan only"],
-    ["review", "plan + implement + manual apply"],
+    ["review", "plan + implement + manual apply gate"],
     ["auto", "full loop (CRITIC→PLANNER feedback)"],
+    ["chat", "ask Apollo about the project"],
   ];
   for (const [mode, desc] of modeHints) {
     await sleep(25);
@@ -269,7 +270,7 @@ export async function startupAnimation(workspace, config) {
 
   console.log("");
   await sleep(80);
-  console.log(`  ${clr.dim("Type a goal to run a mission, or a command.")}`);
+  console.log(`  ${clr.dim("Type a goal (mode picker appears) or a command.")}`);
   console.log(`  ${clr.dim('Examples: "add /health endpoint"  status  diff  exit')}`);
   console.log("");
 }

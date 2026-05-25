@@ -18,12 +18,14 @@ import { checkKeys } from "./providers.mjs";
 import { applyPatches, getMissionDiff, rollbackMission } from "./checkpoints.mjs";
 import { unifiedDiff } from "./diff.mjs";
 import {
+  chatAgent,
   implementerAgent,
   makeStaticPlan,
   plannerAgent,
   reflection,
   reviewerAgent,
 } from "./agents.mjs";
+import { pickMode } from "./picker.mjs";
 import { runAllowedCommand } from "./commands.mjs";
 import {
   Spinner,
@@ -62,6 +64,7 @@ async function dispatch(argv) {
   if (command === "rollback") return rollbackCommand(argv[1]);
   if (command === "resume") return resumeCommand(argv[1]);
   if (command === "config") return configCommand(argv.slice(1));
+  if (command === "chat") return chatCommand(argv.slice(1).join(" "));
   throw new Error(`Unknown command: ${command}. Run "apollo help".`);
 }
 
@@ -165,7 +168,13 @@ async function runCommand(args) {
   ensureApolloProject(workspace);
   const db = openApolloDb(workspace);
   const config = readConfig(workspace);
-  const mode = parsed.mode ?? config.defaultMode ?? DEFAULT_CONFIG.defaultMode;
+  let mode = parsed.mode ?? config.defaultMode;
+  if (!mode) {
+    const picked = await pickMode();
+    if (!picked) { printInfo("Cancelled."); return; }
+    mode = picked;
+  }
+  if (mode === "chat") return chatCommand(parsed.goal);
   if (!VALID_MODES.has(mode)) throw new Error(`Invalid mode: ${mode}`);
 
   const missionId = newId("mis");
@@ -464,6 +473,35 @@ async function executeMission({ db, workspace, config, missionId, goal, mode }) 
   printMissionSummary(missionId, estimate, cost, applyResult, learned, completedIterations);
 }
 
+async function chatCommand(question) {
+  if (!question) throw new Error('Usage: apollo chat "your question"');
+  const workspace = getWorkspace();
+  ensureApolloProject(workspace);
+  const config = readConfig(workspace);
+  const files = listWorkspaceFiles(workspace);
+  const projectDoc = readProjectDoc(workspace);
+
+  if (!process.env.OPENROUTER_API_KEY) {
+    printWarn("OPENROUTER_API_KEY missing — cannot chat.");
+    return;
+  }
+
+  const chatBox = new StreamingBox("◆ APOLLO CHAT", { colorFn: clr.cyan });
+  const spinner = new Spinner("Thinking...").start();
+  let started = false;
+
+  const result = await chatAgent({
+    question, files, projectDoc,
+    provider: config.provider, model: config.model,
+    onToken: (t) => {
+      if (!started) { spinner.stop(); chatBox.open(); started = true; }
+      chatBox.write(t);
+    },
+  });
+  if (!started) { spinner.stop(); chatBox.open(); }
+  chatBox.close(`${result.latencyMs}ms`);
+}
+
 function diffCommand(missionId) {
   const { db, workspace } = openExisting();
   const id = missionId ?? latestMissionId(db);
@@ -629,6 +667,7 @@ function parseShellLine(line) {
     "resume",
     "config",
     "shell",
+    "chat",
   ]);
   if (knownCommands.has(command)) return args;
   return ["run", line];
@@ -687,6 +726,7 @@ ${clr.bold("Usage")}
   apollo keys check               ${dim("verify API keys")}
   apollo config                   ${dim("show config")}
   apollo config set <key> <val>   ${dim("update config")}
+  apollo chat ${dim('"question"')}          ${dim("ask Apollo about the project")}
 
 ${clr.bold("Modes")}
   ${cmd("plan")}       ${dim("plan only, no file changes")}

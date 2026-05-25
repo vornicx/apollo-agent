@@ -164,6 +164,35 @@ Return ONLY valid JSON:
   };
 }
 
+export async function chatAgent({ question, files, projectDoc, provider, model, onToken }) {
+  const result = await callModel({
+    provider,
+    model,
+    onToken,
+    messages: [
+      {
+        role: "system",
+        content: `${CONSTITUTION}
+
+You are Apollo Chat — a project-aware assistant.
+Answer questions about the codebase, architecture, and decisions concisely.
+Do not write file patches or propose changes. If the user wants to implement something, suggest they use "apollo run".`,
+      },
+      {
+        role: "user",
+        content: [
+          `Question: ${question}`,
+          "",
+          `Project memory:\n${projectDoc.slice(0, 4000)}`,
+          "",
+          `Workspace files:\n${files.slice(0, 40).join("\n")}`,
+        ].join("\n"),
+      },
+    ],
+  });
+  return result;
+}
+
 export function reflection(goal, estimate, proposal, review) {
   return {
     success_score: review?.score ? Math.max(0, Math.min(1, review.score / 10)) : 0.7,
