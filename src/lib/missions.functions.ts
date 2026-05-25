@@ -5,6 +5,7 @@ import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
 import { estimateMission } from "@/lib/mission-routing";
 import { callProviderText, getServerProviderKey, type ChatMessage } from "@/lib/ai-providers";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER_ID } from "@/lib/providers";
 
 export const listMissions = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -133,8 +134,8 @@ export const promoteConversation = createServerFn({ method: "POST" })
   });
 
 async function extractGoal(transcript: string): Promise<{ title: string; goal: string }> {
-  const provider = process.env.APOLLO_EXTRACT_PROVIDER ?? "openai";
-  const model = process.env.APOLLO_EXTRACT_MODEL ?? "gpt-4o-mini";
+  const provider = process.env.APOLLO_EXTRACT_PROVIDER ?? DEFAULT_PROVIDER_ID;
+  const model = process.env.APOLLO_EXTRACT_MODEL ?? DEFAULT_MODEL;
   const apiKey = getServerProviderKey(provider);
   if (!apiKey) throw new Error(`${provider.toUpperCase()} API key is not configured`);
   const output = await callProviderText(provider, model, apiKey, [

@@ -56,8 +56,8 @@ AI providers:
 
 Apollo defaults:
 
-- `APOLLO_EXTRACT_PROVIDER=openai`
-- `APOLLO_EXTRACT_MODEL=gpt-4o-mini`
+- `APOLLO_EXTRACT_PROVIDER=openrouter`
+- `APOLLO_EXTRACT_MODEL=openrouter/owl-alpha`
 
 Voice:
 

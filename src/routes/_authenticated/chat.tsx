@@ -12,11 +12,17 @@ import {
   updateConversation,
 } from "@/lib/conversations.functions";
 import { promoteConversation } from "@/lib/missions.functions";
-import { CHAT_PROVIDERS, getProvider } from "@/lib/providers";
+import { CHAT_PROVIDERS, DEFAULT_MODEL, DEFAULT_PROVIDER_ID, getProvider } from "@/lib/providers";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, Trash2, Send, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -53,7 +59,13 @@ function ChatPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   useEffect(() => {
     if (convData?.messages) {
-      setMessages(convData.messages.map((m) => ({ id: m.id, role: m.role as Msg["role"], content: m.content })));
+      setMessages(
+        convData.messages.map((m) => ({
+          id: m.id,
+          role: m.role as Msg["role"],
+          content: m.content,
+        })),
+      );
     }
   }, [convData?.conversation?.id, convData?.messages]);
 
@@ -66,7 +78,8 @@ function ChatPage() {
   }, [messages, streaming]);
 
   const newChatMutation = useMutation({
-    mutationFn: async () => createFn({ data: { provider: "anthropic", model: getProvider("anthropic")!.models[0] } }),
+    mutationFn: async () =>
+      createFn({ data: { provider: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL } }),
     onSuccess: (conv) => {
       qc.invalidateQueries({ queryKey: ["conversations"] });
       setActiveId(conv.id);
@@ -102,11 +115,17 @@ function ChatPage() {
     if (!input.trim() || !activeId || streaming) return;
     const userMsg = input.trim();
     setInput("");
-    setMessages((m) => [...m, { role: "user", content: userMsg }, { role: "assistant", content: "" }]);
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: userMsg },
+      { role: "assistant", content: "" },
+    ]);
     setStreaming(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -118,7 +137,11 @@ function ChatPage() {
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "");
         let errMsg = `Request failed (${res.status})`;
-        try { errMsg = JSON.parse(errText).error ?? errMsg; } catch { /* noop */ }
+        try {
+          errMsg = JSON.parse(errText).error ?? errMsg;
+        } catch {
+          /* noop */
+        }
         toast.error(errMsg);
         setMessages((m) => m.slice(0, -1));
         return;
@@ -131,7 +154,10 @@ function ChatPage() {
         const chunk = decoder.decode(value, { stream: true });
         setMessages((m) => {
           const next = [...m];
-          next[next.length - 1] = { role: "assistant", content: next[next.length - 1].content + chunk };
+          next[next.length - 1] = {
+            role: "assistant",
+            content: next[next.length - 1].content + chunk,
+          };
           return next;
         });
       }
@@ -151,7 +177,11 @@ function ChatPage() {
       {/* Conversations sidebar */}
       <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-card">
         <div className="p-3">
-          <Button className="w-full" onClick={() => newChatMutation.mutate()} disabled={newChatMutation.isPending}>
+          <Button
+            className="w-full"
+            onClick={() => newChatMutation.mutate()}
+            disabled={newChatMutation.isPending}
+          >
             <Plus className="mr-2 h-4 w-4" /> New chat
           </Button>
         </div>
@@ -166,11 +196,16 @@ function ChatPage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate">{c.title}</div>
-                <div className="truncate font-mono text-[10px] text-muted-foreground">{c.provider} · {c.model}</div>
+                <div className="truncate font-mono text-[10px] text-muted-foreground">
+                  {c.provider} · {c.model}
+                </div>
               </div>
               <button
                 className="opacity-0 group-hover:opacity-100"
-                onClick={(e) => { e.stopPropagation(); delMutation.mutate(c.id); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  delMutation.mutate(c.id);
+                }}
               >
                 <Trash2 className="h-3.5 w-3.5 text-destructive" />
               </button>
@@ -196,19 +231,30 @@ function ChatPage() {
                     if (prov) changeModel(p, prov.models[0]);
                   }}
                 >
-                  <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-8 w-40 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     {CHAT_PROVIDERS.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 {currentProvider && (
-                  <Select value={currentConv.model} onValueChange={(m) => changeModel(currentConv.provider, m)}>
-                    <SelectTrigger className="h-8 w-56 font-mono text-xs"><SelectValue /></SelectTrigger>
+                  <Select
+                    value={currentConv.model}
+                    onValueChange={(m) => changeModel(currentConv.provider, m)}
+                  >
+                    <SelectTrigger className="h-8 w-56 font-mono text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       {currentProvider.models.map((m) => (
-                        <SelectItem key={m} value={m} className="font-mono text-xs">{m}</SelectItem>
+                        <SelectItem key={m} value={m} className="font-mono text-xs">
+                          {m}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -236,7 +282,10 @@ function ChatPage() {
                 {messages.length === 0 && (
                   <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                     Start the conversation. Make sure you have an API key configured for{" "}
-                    <Link to="/keys" className="text-primary underline">{currentConv.provider}</Link>.
+                    <Link to="/keys" className="text-primary underline">
+                      {currentConv.provider}
+                    </Link>
+                    .
                   </div>
                 )}
                 <div className="space-y-6">
@@ -269,7 +318,10 @@ function ChatPage() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
                   }}
                   placeholder="Send a message…"
                   rows={2}

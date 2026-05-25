@@ -20,7 +20,25 @@ export type Provider = {
   docsUrl: string;
 };
 
+export const DEFAULT_PROVIDER_ID: ProviderId = "openrouter";
+export const DEFAULT_MODEL = "openrouter/owl-alpha";
+
 export const PROVIDERS: Provider[] = [
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    kind: "chat",
+    keyHint: "sk-or-...",
+    keyUrl: "https://openrouter.ai/keys",
+    docsUrl: "https://openrouter.ai/docs",
+    models: [
+      DEFAULT_MODEL,
+      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-4o",
+      "google/gemini-2.0-flash-001",
+      "meta-llama/llama-3.3-70b-instruct",
+    ],
+  },
   {
     id: "anthropic",
     name: "Anthropic (Claude)",
@@ -51,12 +69,7 @@ export const PROVIDERS: Provider[] = [
     keyHint: "AIza...",
     keyUrl: "https://aistudio.google.com/app/apikey",
     docsUrl: "https://ai.google.dev/",
-    models: [
-      "gemini-2.0-flash",
-      "gemini-2.0-flash-lite",
-      "gemini-1.5-pro",
-      "gemini-1.5-flash",
-    ],
+    models: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
   },
   {
     id: "groq",
@@ -80,20 +93,6 @@ export const PROVIDERS: Provider[] = [
     keyUrl: "https://console.mistral.ai/api-keys",
     docsUrl: "https://docs.mistral.ai/",
     models: ["mistral-large-latest", "mistral-small-latest", "open-mistral-nemo"],
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    kind: "chat",
-    keyHint: "sk-or-...",
-    keyUrl: "https://openrouter.ai/keys",
-    docsUrl: "https://openrouter.ai/docs",
-    models: [
-      "anthropic/claude-sonnet-4.5",
-      "openai/gpt-4o",
-      "google/gemini-2.0-flash-001",
-      "meta-llama/llama-3.3-70b-instruct",
-    ],
   },
   {
     id: "cursor",

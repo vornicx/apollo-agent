@@ -1,3 +1,5 @@
+import { DEFAULT_MODEL, DEFAULT_PROVIDER_ID } from "@/lib/providers";
+
 /** APOLLO agent personas - distilled from the mission-control specs. */
 export type PersonaId = "conductor" | "planner" | "implementer" | "reviewer";
 
@@ -55,7 +57,7 @@ You are the CONDUCTOR AGENT in APOLLO.
 You orchestrate the full lifecycle: Planning -> Implementation -> Review -> Commit. You delegate to subagents and never implement code yourself.
 
 Be concise, structured, decisive, and cost-aware.`,
-    defaultModel: { provider: "openai", model: "gpt-4o" },
+    defaultModel: { provider: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL },
   },
   planner: {
     id: "planner",
@@ -88,7 +90,7 @@ Risk assessment:
 Success criteria:
 
 If this is a coding task, include relevant files, tests to write, and TDD phases. Do not implement code.`,
-    defaultModel: { provider: "openai", model: "gpt-4o" },
+    defaultModel: { provider: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL },
   },
   implementer: {
     id: "implementer",
@@ -111,7 +113,7 @@ Rules:
 - Keep cost and latency in mind.
 
 Output completed work with clear next actions.`,
-    defaultModel: { provider: "openai", model: "gpt-4o-mini" },
+    defaultModel: { provider: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL },
   },
   reviewer: {
     id: "reviewer",
@@ -144,7 +146,7 @@ FIXES:
 APPROVED: yes/no
 
 If quality is below 7/10, veto the output and send it back for revision.`,
-    defaultModel: { provider: "openai", model: "gpt-4o" },
+    defaultModel: { provider: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL },
   },
 };
 
