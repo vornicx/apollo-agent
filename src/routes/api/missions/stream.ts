@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Database } from "@/integrations/supabase/types";
 import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
+import { estimateMission } from "@/lib/mission-routing";
 
 const bodySchema = z.object({
   missionId: z.string().uuid(),
@@ -50,12 +51,22 @@ export const Route = createFileRoute("/api/missions/stream")({
 
           const position = priorPhases?.length ?? 0;
           const phaseType =
-            personaId === "planner" ? "planning" : personaId === "implementer" ? "implement" : "review";
+            personaId === "planner"
+              ? "planning"
+              : personaId === "implementer"
+                ? "implement"
+                : "review";
           const userPrompt = buildPhasePrompt(personaId, mission.goal, priorPhases ?? []);
 
-          const recalledMems = await recallForUser(supabase, `${mission.title}\n${mission.goal}`, 6);
+          const recalledMems = await recallForUser(
+            supabase,
+            `${mission.title}\n${mission.goal}`,
+            6,
+          );
           const memBlock = formatMemoriesBlock(recalledMems);
-          const sysPrompt = memBlock ? `${persona.systemPrompt}\n\n${memBlock}` : persona.systemPrompt;
+          const sysPrompt = memBlock
+            ? `${persona.systemPrompt}\n\n${memBlock}`
+            : persona.systemPrompt;
 
           const { data: phaseRow, error: insErr } = await supabase
             .from("mission_phases")
@@ -72,7 +83,8 @@ export const Route = createFileRoute("/api/missions/stream")({
             })
             .select("id")
             .single();
-          if (insErr || !phaseRow) return json({ error: insErr?.message ?? "phase insert failed" }, 500);
+          if (insErr || !phaseRow)
+            return json({ error: insErr?.message ?? "phase insert failed" }, 500);
 
           await supabase
             .from("missions")
@@ -168,7 +180,9 @@ export const Route = createFileRoute("/api/missions/stream")({
                 }
               } catch (err) {
                 controller.enqueue(
-                  encoder.encode(`\n\n[stream error: ${err instanceof Error ? err.message : String(err)}]`),
+                  encoder.encode(
+                    `\n\n[stream error: ${err instanceof Error ? err.message : String(err)}]`,
+                  ),
                 );
                 await supabase
                   .from("mission_phases")
@@ -225,12 +239,38 @@ function buildPhasePrompt(
   goal: string,
   prior: { persona: string; output: string }[],
 ): string {
+  const estimate = estimateMission(goal);
   const ctx = prior
-    .map((p) => `### Previous ${PERSONAS[p.persona as PersonaId]?.name ?? p.persona} output\n${p.output}`)
+    .map(
+      (p) =>
+        `### Previous ${PERSONAS[p.persona as PersonaId]?.name ?? p.persona} output\n${p.output}`,
+    )
     .join("\n\n");
-  const base = `# Mission goal\n${goal}\n\n${ctx ? ctx + "\n\n" : ""}`;
-  if (personaId === "planner") return base + "Produce a multi-phase plan to achieve the goal.";
+  const base = `# Mission goal
+${goal}
+
+# Runtime estimate
+- Complexity: ${estimate.complexity}
+- Route: ${estimate.route}
+- Agents: ${estimate.agents.join(", ")}
+- Expected budget: ${estimate.budget}
+- Starting confidence: ${Math.round(estimate.confidence * 100)}%
+- Risk: ${estimate.risk}
+
+${ctx ? ctx + "\n\n" : ""}`;
+  if (personaId === "planner") {
+    return (
+      base +
+      "Produce a mission plan. Include objective, complexity, confidence, execution strategy, recommended agents, risk assessment and success criteria."
+    );
+  }
   if (personaId === "implementer")
-    return base + "Implement the plan from the Planner. Test-first code, then the implementation.";
-  return base + "Review the Implementer's output against the plan and the original goal.";
+    return (
+      base +
+      "Execute the Planner output. Produce concrete deliverables and state assumptions, confidence and next actions."
+    );
+  return (
+    base +
+    "Review the Implementer's output against the Planner's plan and original goal. Include quality score, confidence, issues, fixes and APPROVED yes/no."
+  );
 }

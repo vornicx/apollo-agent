@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { PERSONAS, type PersonaId } from "@/lib/personas";
 import { recallForUser, formatMemoriesBlock } from "@/lib/memory.functions";
+import { estimateMission } from "@/lib/mission-routing";
 
 export const listMissions = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -20,10 +21,12 @@ export const listMissions = createServerFn({ method: "GET" })
 export const createMission = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({
-      title: z.string().min(1).max(120).optional(),
-      goal: z.string().min(5).max(8000),
-    }).parse(input),
+    z
+      .object({
+        title: z.string().min(1).max(120).optional(),
+        goal: z.string().min(5).max(8000),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
@@ -58,7 +61,9 @@ export const getMission = createServerFn({ method: "POST" })
         .single(),
       supabase
         .from("mission_phases")
-        .select("id, phase_type, persona, provider, model, input, output, status, position, created_at, completed_at")
+        .select(
+          "id, phase_type, persona, provider, model, input, output, status, position, created_at, completed_at",
+        )
         .eq("mission_id", data.id)
         .order("position", { ascending: true }),
     ]);
@@ -80,10 +85,12 @@ export const deleteMission = createServerFn({ method: "POST" })
 export const updatePhaseOutput = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({
-      phaseId: z.string().uuid(),
-      output: z.string().max(200_000),
-    }).parse(input),
+    z
+      .object({
+        phaseId: z.string().uuid(),
+        output: z.string().max(200_000),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase
@@ -97,9 +104,7 @@ export const updatePhaseOutput = createServerFn({ method: "POST" })
 /** Promote a chat conversation into a mission. Uses an LLM to extract a clean goal. */
 export const promoteConversation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z.object({ conversationId: z.string().uuid() }).parse(input),
-  )
+  .inputValidator((input: unknown) => z.object({ conversationId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: msgs, error } = await supabase
@@ -142,22 +147,24 @@ async function extractGoal(transcript: string): Promise<{ title: string; goal: s
         },
         { role: "user", content: transcript },
       ],
-      tools: [{
-        type: "function",
-        function: {
-          name: "create_mission",
-          description: "Create a mission from the conversation.",
-          parameters: {
-            type: "object",
-            properties: {
-              title: { type: "string" },
-              goal: { type: "string" },
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "create_mission",
+            description: "Create a mission from the conversation.",
+            parameters: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                goal: { type: "string" },
+              },
+              required: ["title", "goal"],
+              additionalProperties: false,
             },
-            required: ["title", "goal"],
-            additionalProperties: false,
           },
         },
-      }],
+      ],
       tool_choice: { type: "function", function: { name: "create_mission" } },
     }),
   });
@@ -181,10 +188,12 @@ async function extractGoal(transcript: string): Promise<{ title: string; goal: s
 export const runPhase = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({
-      missionId: z.string().uuid(),
-      persona: z.enum(["planner", "implementer", "reviewer"]),
-    }).parse(input),
+    z
+      .object({
+        missionId: z.string().uuid(),
+        persona: z.enum(["planner", "implementer", "reviewer"]),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
@@ -204,16 +213,14 @@ export const runPhase = createServerFn({ method: "POST" })
       .eq("mission_id", data.missionId)
       .order("position", { ascending: true });
 
-    const position = (priorPhases?.length ?? 0);
+    const position = priorPhases?.length ?? 0;
     const phaseType =
       personaId === "planner" ? "planning" : personaId === "implementer" ? "implement" : "review";
 
     // Recall relevant memories and prepend to the persona system prompt
     const mems = await recallForUser(supabase, `${mission.title}\n${mission.goal}`, 6);
     const memBlock = formatMemoriesBlock(mems);
-    const systemPrompt = memBlock
-      ? `${persona.systemPrompt}\n\n${memBlock}`
-      : persona.systemPrompt;
+    const systemPrompt = memBlock ? `${persona.systemPrompt}\n\n${memBlock}` : persona.systemPrompt;
 
     // Build the user prompt for this phase
     const userPrompt = buildPhasePrompt(personaId, mission.goal, priorPhases ?? []);
@@ -287,18 +294,42 @@ function buildPhasePrompt(
   goal: string,
   prior: { persona: string; output: string }[],
 ): string {
+  const estimate = estimateMission(goal);
   const ctx = prior
-    .map((p) => `### Previous ${PERSONAS[p.persona as PersonaId]?.name ?? p.persona} output\n${p.output}`)
+    .map(
+      (p) =>
+        `### Previous ${PERSONAS[p.persona as PersonaId]?.name ?? p.persona} output\n${p.output}`,
+    )
     .join("\n\n");
 
-  const base = `# Mission goal\n${goal}\n\n${ctx ? ctx + "\n\n" : ""}`;
+  const base = `# Mission goal
+${goal}
+
+# Runtime estimate
+- Complexity: ${estimate.complexity}
+- Route: ${estimate.route}
+- Agents: ${estimate.agents.join(", ")}
+- Expected budget: ${estimate.budget}
+- Starting confidence: ${Math.round(estimate.confidence * 100)}%
+- Risk: ${estimate.risk}
+
+${ctx ? ctx + "\n\n" : ""}`;
   if (personaId === "planner") {
-    return base + "Produce a multi-phase plan to achieve the goal. Use the response structure your role prescribes.";
+    return (
+      base +
+      "Produce a mission plan. Include objective, complexity, confidence, execution strategy, recommended agents, risk assessment and success criteria."
+    );
   }
   if (personaId === "implementer") {
-    return base + "Implement the plan from the Planner. Show test-first code and the implementation that makes the tests pass.";
+    return (
+      base +
+      "Execute the Planner output. Produce concrete deliverables and state assumptions, confidence and next actions."
+    );
   }
-  return base + "Review the Implementer's output against the Planner's plan and the original goal. Reply with the structured review your role prescribes.";
+  return (
+    base +
+    "Review the Implementer's output against the Planner's plan and original goal. Include quality score, confidence, issues, fixes and APPROVED yes/no."
+  );
 }
 
 async function callLovableAI(model: string, system: string, user: string): Promise<string> {
@@ -325,4 +356,3 @@ async function callLovableAI(model: string, system: string, user: string): Promi
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   return json.choices?.[0]?.message?.content?.trim() ?? "";
 }
-
