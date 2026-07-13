@@ -6,10 +6,19 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +31,18 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: npm run build:desktop
+      - name: Verify packages and generate checksums
+        working-directory: packages/desktop/src-tauri/target/release/bundle
+        run: |
+          dpkg-deb --info deb/*.deb
+          ./appimage/*.AppImage --appimage-version
+          sha256sum deb/*.deb appimage/*.AppImage > SHA256SUMS
+      - name: Attest release provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            packages/desktop/src-tauri/target/release/bundle/deb/*.deb
+            packages/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -30,3 +51,4 @@ jobs:
           files: |
             packages/desktop/src-tauri/target/release/bundle/deb/*.deb
             packages/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            packages/desktop/src-tauri/target/release/bundle/SHA256SUMS

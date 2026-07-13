@@ -21,6 +21,11 @@ Expected Linux artifacts:
 2. Update `CHANGELOG.md` and measured benchmark evidence.
 3. Run `npm run verify` and a controlled repeated benchmark.
 4. Commit the release, create a tag such as `v0.2.0-alpha.0`, and push the tag.
-5. GitHub Actions builds the Linux packages and attaches them to a prerelease.
+5. GitHub Actions builds and validates the Linux packages, creates build-provenance attestations,
+   and attaches the installers plus `SHA256SUMS` to a prerelease.
+
+The release job sets `APPIMAGE_EXTRACT_AND_RUN=1`, so its packaging tools also work on runners
+where FUSE is unavailable. CI runs only for branches and pull requests; the release workflow owns
+tag verification to avoid compiling the same tagged tree twice.
 
 No tag is created automatically by the repository scripts. Publishing remains an explicit human-authorized action.
