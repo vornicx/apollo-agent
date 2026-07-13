@@ -1,0 +1,13 @@
+{
+  "name": "@archic/apollo-router",
+  "version": "0.2.0-alpha.0",
+  "private": true,
+  "description": "Apollo autorouter: routes each task to the right model by specialization, quality, cost, and speed — with a fully explainable decision.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@archic/apollo-core": ["packages/core/src/index.ts"],
+      "@archic/apollo-router": ["packages/router/src/index.ts"],
+      "@archic/apollo-memory": ["packages/memory/src/index.ts"],
+      "@archic/apollo-providers": ["packages/providers/src/index.ts"],
+      "@archic/apollo-config": ["packages/config/src/index.ts"],
+      "@archic/apollo-mcp": ["packages/mcp/src/index.ts"],
+      "@archic/apollo-verify": ["packages/verify/src/index.ts"],
+      "@archic/apollo-auth": ["packages/auth/src/index.ts"],
+      "@archic/apollo-dashboard": ["packages/dashboard/src/index.ts"],
+      "@archic/apollo-agent": ["packages/agent/src/index.ts"],
+      "@archic/apollo-cortex": ["packages/cortex/src/index.ts"]
+      ,"@archic/apollo-benchmark": ["packages/benchmark/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
+}

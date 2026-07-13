@@ -1,0 +1,12 @@
+{
+  "name": "@archic/apollo-desktop",
+  "version": "0.2.0-alpha.0",
+  "private": true,
+  "description": "Thin native control shell for Apollo Runtime",
+  "scripts": {
+    "runtime": "node scripts/stage-runtime.mjs",
+    "dev": "npm run runtime && tauri dev --config src-tauri/tauri.conf.json",
+    "build": "npm run runtime && tauri build --config src-tauri/tauri.conf.json",
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml"
+  }
+}

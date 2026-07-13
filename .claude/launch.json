@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "apollo-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "apollo", "--silent", "--", "dashboard", "--port", "4317"],
+      "port": 4317
+    }
+  ]
+}

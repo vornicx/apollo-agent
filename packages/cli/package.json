@@ -1,0 +1,27 @@
+{
+  "name": "@archic/apollo-cli",
+  "version": "0.2.0-alpha.0",
+  "private": true,
+  "description": "Apollo CLI surface: auth/login, model registry, explainable routing, and the verified execution pipeline.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@archic/apollo-benchmark": "*",
+    "@archic/apollo-agent": "*",
+    "@archic/apollo-auth": "*",
+    "@archic/apollo-config": "*",
+    "@archic/apollo-core": "*",
+    "@archic/apollo-cortex": "*",
+    "@archic/apollo-dashboard": "*",
+    "@archic/apollo-mcp": "*",
+    "@archic/apollo-memory": "*",
+    "@archic/apollo-providers": "*",
+    "@archic/apollo-router": "*",
+    "@archic/apollo-verify": "*"
+  }
+}
