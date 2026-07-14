@@ -18,6 +18,16 @@ function seedRuns(): string {
 
 const ctx = (dir: string): DashboardContext => ({ runsDir: dir, models: DEFAULT_MODELS });
 
+async function waitUntil<T>(read: () => Promise<T> | T, predicate: (value: T) => boolean, timeoutMs = 2_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await read();
+    if (predicate(value)) return value;
+    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 describe("resolveApiRoute", () => {
   it("serves the model fleet", () => {
     const res = resolveApiRoute("/api/models", ctx(seedRuns()));
@@ -135,8 +145,10 @@ describe("startDashboard", () => {
       }).then((response) => response.json()) as { mission: { id: string; status: string } };
       expect(launched.mission.id).toMatch(/^mission-/);
       expect(launched.mission.status).toBe("running");
-      await new Promise((resolve) => setTimeout(resolve, 75));
-      const control = await fetch(`${dash.url}/api/control`).then((response) => response.json()) as { missions: Array<{ id: string; status: string }> };
+      const control = await waitUntil(
+        () => fetch(`${dash.url}/api/control`).then((response) => response.json()) as Promise<{ missions: Array<{ id: string; status: string }> }>,
+        (value) => value.missions.some((mission) => mission.id === launched.mission.id && mission.status === "succeeded"),
+      );
       expect(control.missions.find((mission) => mission.id === launched.mission.id)?.status).toBe("succeeded");
       const retried = await fetch(`${dash.url}/api/missions/${launched.mission.id}/retry`, {
         method: "POST",
@@ -213,8 +225,11 @@ describe("MissionController", () => {
     const controller = new MissionController({ command: process.execPath, args: ["-e", script], stateDir });
     try {
       const mission = controller.launch({ goal: "ambiguous", workspace });
-      await new Promise((resolve) => setTimeout(resolve, 75));
-      expect(controller.get(mission.id)?.status).toBe("needs_input");
+      const settled = await waitUntil(
+        () => controller.get(mission.id),
+        (value) => value?.status === "needs_input",
+      );
+      expect(settled?.status).toBe("needs_input");
     } finally {
       controller.close();
     }
