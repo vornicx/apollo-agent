@@ -88,14 +88,16 @@ describe("runCortex", () => {
   });
 
   it("takes the trivial fast path when the planner says so", async () => {
+    const bus = new EventBus();
     const hub = scriptedHub({
       plan: { analysis: "trivial", trivial: true, confidence: 0.95, doneCriteria: [], steps: [] },
       synthesis: "42 is the answer.",
     });
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "what is 6 times 7?", tools: new ToolRegistry() });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "what is 6 times 7?", tools: new ToolRegistry(), bus });
     expect(result.status).toBe("ok");
     expect(result.plan?.steps).toHaveLength(1);
     expect(result.plan?.steps[0].id).toBe("s0");
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "verification.passed" }));
   });
 
   it("replans when verification fails, then finalizes", async () => {

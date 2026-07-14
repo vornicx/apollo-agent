@@ -65,7 +65,9 @@ function renderMissions(data){
       : '<button data-action="retry" data-id="'+esc(m.id)+'">Retry</button>';
     if(m.status === 'stopped' || m.status === 'needs_input') actions += '<button class="gold-btn" data-action="clarify" data-id="'+esc(m.id)+'">Answer & retry</button>';
     return '<div class="mission-row"><span class="sdot '+(m.status==='succeeded'?'succeeded':(m.status==='running'||m.status==='needs_input')?'incomplete':'failed')+'"></span>'+
-      '<div class="mission-main"><div class="mission-goal">'+esc(m.goal).slice(0,240)+'</div><div class="mission-meta mono">'+esc(m.id)+' · '+esc(m.workspace)+' · '+esc(m.status)+'</div></div>'+
+      '<div class="mission-main"><div class="mission-goal">'+esc(m.goal).slice(0,240)+'</div>'+
+      (m.answer ? '<div class="mission-answer">'+esc(m.answer).slice(0,1200)+'</div>' : '')+
+      '<div class="mission-meta mono">'+esc(m.id)+' · '+esc(m.workspace)+' · '+esc(m.status)+(m.verificationPassed===true?' · verified':'')+'</div></div>'+
       '<div class="mission-actions">'+actions+'</div></div>';
   }).join('');
   el('mission-list').innerHTML = rows || '<div class="empty">No missions yet. Describe an outcome above.</div>';
@@ -633,6 +635,7 @@ button.danger { color:var(--red); }
 .mission-row .sdot { margin-top:6px; flex:none; }
 .mission-main { flex:1; min-width:0; }
 .mission-goal { line-height:1.4; }
+.mission-answer { margin-top:8px; padding:9px 10px; border-left:2px solid var(--gold); background:var(--gold-soft); color:var(--text); line-height:1.45; white-space:pre-wrap; }
 .mission-meta { color:var(--faint); font-size:10.5px; margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .mission-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 .health { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }

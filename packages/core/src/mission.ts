@@ -64,7 +64,7 @@ export function createMission(input: Omit<Mission, "schemaVersion" | "createdAt"
   };
 }
 
-export function outcomeFromEvents(mission: Mission, events: readonly StampedEvent[]): MissionOutcome {
+export function outcomeFromEvents(mission: Mission, events: readonly StampedEvent[], answer?: string): MissionOutcome {
   const run = summarizeRun(events);
   const items: EvidenceItem[] = [];
   const remainingRisks: string[] = [];
@@ -101,9 +101,9 @@ export function outcomeFromEvents(mission: Mission, events: readonly StampedEven
     schemaVersion: MISSION_SCHEMA_VERSION,
     missionId: mission.id,
     status: run.status,
-    summary: run.status === "succeeded"
+    summary: answer?.trim() || (run.status === "succeeded"
       ? `Verified completion in ${run.attempts} attempt${run.attempts === 1 ? "" : "s"}.`
-      : run.status === "failed" ? `Mission failed after ${run.attempts} attempts.` : "Mission stopped without a terminal outcome.",
+      : run.status === "failed" ? `Mission failed after ${run.attempts} attempts.` : "Mission stopped without a terminal outcome."),
     attempts: run.attempts,
     models: run.models,
     costUsd: run.costUsd,

@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-cli",
-  "version": "0.2.0-alpha.0",
+  "version": "0.2.0-alpha.1",
   "private": true,
   "description": "Apollo CLI surface: auth/login, model registry, explainable routing, and the verified execution pipeline.",
   "type": "module",

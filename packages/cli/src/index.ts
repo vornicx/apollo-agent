@@ -280,7 +280,7 @@ function startRecording(bus: EventBus, path: string | undefined): { sink?: Jsonl
   return { sink: new JsonlEventSink(path).attach(bus), path };
 }
 
-function persistMissionContract(id: string, goal: string, bus: EventBus, workspace?: string, checks: Check[] = []): string {
+function persistMissionContract(id: string, goal: string, bus: EventBus, workspace?: string, checks: Check[] = [], answer?: string): string {
   const mission = createMission({
     id,
     goal,
@@ -293,7 +293,7 @@ function persistMissionContract(id: string, goal: string, bus: EventBus, workspa
       value: "path" in check ? check.path : "command" in check ? check.command : undefined,
     })),
   });
-  return writeMissionBundle(MISSIONS_DIR, mission, outcomeFromEvents(mission, bus.history()));
+  return writeMissionBundle(MISSIONS_DIR, mission, outcomeFromEvents(mission, bus.history(), answer));
 }
 
 function eventLine(event: StampedEvent, t0: number): string {
@@ -819,7 +819,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
     })),
   });
   recording.sink?.close();
-  const missionDir = persistMissionContract(runId, goal, bus, workspace, extraChecks);
+  const missionDir = persistMissionContract(runId, goal, bus, workspace, extraChecks, result.answer);
   await mcp?.close();
 
   console.log();
@@ -1085,7 +1085,7 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     models,
     port,
     runtime: flags.get("read-only") === true ? undefined : runtime,
-    version: "0.2.0-alpha.0",
+    version: "0.2.0-alpha.1",
     diagnostics: {
       providers: diagnosticHub.providers(),
       providerNotes: providerNotes.map((note) => note.replace(/\x1b\[[0-9;]*m/g, "")),
@@ -1192,7 +1192,7 @@ async function executeBenchmarkTask(
   if (variant === "apollo-routed" || variant === "apollo-single") {
     const result = await runCortex({ hub, registry, goal: task.goal, taskId: runId, workspace, tools: workspaceTools(workspace), extraChecks: task.checks, confirm: () => true, bus });
     recording.sink?.close();
-    const evidencePath = persistMissionContract(runId, task.goal, bus, workspace, task.checks);
+    const evidencePath = persistMissionContract(runId, task.goal, bus, workspace, task.checks, result.answer);
     const models = bus.history().filter((event) => event.type === "execution.completed" && event.modelId).map((event) => event.type === "execution.completed" ? event.modelId! : "");
     const costUsd = bus.history().reduce((sum, event) => sum + (event.type === "execution.completed" ? event.costUsd ?? 0 : 0), 0);
     const status = task.expected === "honest-stop"
@@ -1611,7 +1611,7 @@ async function runInteractiveGoal(
   });
   recording.sink?.close();
   if (memoryClient && memoryClient !== session.mcp) await memoryClient.close();
-  const missionDir = persistMissionContract(runId, goal, bus, session.workspace, session.checks);
+  const missionDir = persistMissionContract(runId, goal, bus, session.workspace, session.checks, result.answer);
 
   console.log();
   const color = result.status === "ok" ? green : yellow;

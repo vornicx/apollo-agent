@@ -38,6 +38,16 @@ describe("mission contract", () => {
     expect(outcome.evidence.verificationPassed).toBe(false);
   });
 
+  it("persists the final user-facing answer as the mission summary", () => {
+    const mission = createMission({ id: "m-answer", goal: "say hello", acceptance: [], constraints: [] });
+    const events = [
+      { type: "task.started", taskId: mission.id, title: mission.goal, at: 1, seq: 1 },
+      { type: "verification.passed", taskId: mission.id, attempt: 1, at: 2, seq: 2 },
+      { type: "task.completed", taskId: mission.id, attempts: 1, at: 3, seq: 3 },
+    ] as StampedEvent[];
+    expect(outcomeFromEvents(mission, events, "¡Hola! ¿En qué puedo ayudarte?").summary).toBe("¡Hola! ¿En qué puedo ayudarte?");
+  });
+
   it("writes the versioned mission, outcome, and evidence bundle", async () => {
     const root = await mkdtemp(join(tmpdir(), "apollo-mission-"));
     try {

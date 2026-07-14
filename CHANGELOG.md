@@ -2,11 +2,14 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
-## Unreleased
+## 0.2.0-alpha.1 — 2026-07-14
 
 ### Changed
 
 - Release checksums, build-provenance attestations, package validation, and FUSE-independent AppImage builds.
+- Desktop mission replies now persist as user-facing summaries and appear directly in mission control.
+- Trivial conversational missions emit successful verification evidence instead of a contradictory unverified outcome.
+- Dashboard integration tests wait for actual state transitions instead of relying on fixed timing.
 
 ## 0.2.0-alpha.0 — 2026-07-13
 

@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-cortex",
-  "version": "0.2.0-alpha.0",
+  "version": "0.2.0-alpha.1",
   "private": true,
   "description": "Apollo cognitive cycle — plan → act → critic → verify → finalize, each phase routed by the autorouter, over the provider hub, on the Apollo event stream. Adapted from cortex-harness.",
   "type": "module",

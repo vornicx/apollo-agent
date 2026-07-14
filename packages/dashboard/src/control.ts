@@ -28,6 +28,8 @@ export interface ControlledMission extends MissionLaunchRequest {
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
   error?: string;
+  answer?: string;
+  verificationPassed?: boolean;
 }
 
 const VALID_ID = /^[A-Za-z0-9_-]+$/;
@@ -126,6 +128,7 @@ export class MissionController {
       if (current.status === "running") {
         current.status = code === 0 ? "succeeded" : code === 2 && this.needsInput(id) ? "needs_input" : code === 2 ? "stopped" : "failed";
       }
+      this.loadOutcome(current);
       if (current.status === "failed" && diagnosticTail.trim()) current.error = redactText(diagnosticTail.trim().slice(-2_000));
       this.save(current);
     });
@@ -193,6 +196,7 @@ export class MissionController {
             record.updatedAt = new Date().toISOString();
             this.save(record);
           } else {
+            this.loadOutcome(record);
             this.records.set(record.id, record);
           }
         }
@@ -207,5 +211,16 @@ export class MissionController {
     } catch {
       return false;
     }
+  }
+
+  private loadOutcome(record: ControlledMission): void {
+    try {
+      const outcome = JSON.parse(readFileSync(join(resolve(this.runtime.stateDir), "missions", record.id, "outcome.json"), "utf8")) as {
+        summary?: string;
+        evidence?: { verificationPassed?: boolean };
+      };
+      if (outcome.summary?.trim()) record.answer = outcome.summary.trim();
+      if (typeof outcome.evidence?.verificationPassed === "boolean") record.verificationPassed = outcome.evidence.verificationPassed;
+    } catch { /* mission bundle may not exist for a process-level failure */ }
   }
 }

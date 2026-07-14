@@ -114,6 +114,7 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
     const verdict = await critique(ctx, pseudo, answer.slice(0, 2000));
     if (verdict.verdict === "pass") {
       plan.steps = [pseudo];
+      bus.emit({ type: "verification.passed", taskId, attempt: ctx.lastActAttempt || meta.turns });
       return finish("ok", answer, plan);
     }
     feedback = verdict.feedback || "direct answer rejected";
