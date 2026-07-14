@@ -42,9 +42,15 @@ Raw local reports:
 - `.apollo/benchmarks/benchmark-1783912250345/report.json` (`apollo-routed`)
 - `.apollo/benchmarks/benchmark-1783912788974/report.json` (`apollo-single`)
 
+An adaptive-runtime smoke on 2026-07-14 ran the same `repair-node-test` fixture through the new
+`agent` lane: verified success, zero false success, 12.5 s, six actual model calls, and $0 marginal
+cost (`.apollo/benchmarks/benchmark-1784048042838/report.json`). The previous routed run of that
+fixture took 31.7 s and 11 turns. This single paired fixture is a regression signal (about 60%
+lower wall time), not a replacement for a repeated ten-task comparison.
+
 A 200-attempt repeated campaign was also started for this release. The provider subscription reached
 its weekly usage limit partway through, so that campaign is explicitly **inconclusive** and is not
-published as a quality comparison. The incident led to schema v3's invalid-attempt accounting and
+published as a quality comparison. The incident led to invalid-attempt accounting and
 quota fail-fast behavior. The two complete ten-task passes above remain the current integration evidence.
 
 On this small run, routing preserved correctness while reducing median duration by about 11.5%
@@ -55,8 +61,8 @@ the same fixed model workspace tools but no planner, critic, independent verifie
 memory. `apollo-memory` remains reserved until its controlled corpus and distractor protocol land;
 Apollo refuses to label simulated numbers as measurements.
 
-Repeated reports use schema version 3 and include mean, median, p95, sample standard deviation,
-total turns, and a Wilson 95% interval for correctness. Use `--label` to record the machine or
+Repeated reports use schema version 4 and include selected execution depth, model-call count,
+calls per run, mean, median, p95, sample standard deviation, total turns, and a Wilson 95% interval for correctness. Use `--label` to record the machine or
 release tag. A publishable comparison should use `--variant all --repeat 5` or more.
 `--concurrency` bounds parallel attempts; reports retain deterministic task/variant/repetition order.
 Provider exceptions are marked `invalid` and excluded from correctness, latency, cost, and confidence

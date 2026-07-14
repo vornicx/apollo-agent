@@ -18,7 +18,7 @@ describe("benchmark suite", () => {
     }));
     expect(report.aggregates[0]).toMatchObject({ variant: "model-only", correct: 0, falseSuccesses: 2 });
     expect(report.aggregates[1]).toMatchObject({ variant: "apollo-routed", correct: 2, verifiedSuccessRate: 1 });
-    expect(report.schemaVersion).toBe(3);
+    expect(report.schemaVersion).toBe(4);
     expect(report.aggregates[1].successRate95Ci).toHaveLength(2);
   });
 
@@ -31,7 +31,7 @@ describe("benchmark suite", () => {
       attempts: 3,
     }), "ci", 3);
     expect(report.attempts.map((attempt) => attempt.repetition)).toEqual([1, 2, 3]);
-    expect(report.aggregates[0]).toMatchObject({ uniqueTasks: 1, repetitions: 3, tasks: 3, totalTurns: 9 });
+    expect(report.aggregates[0]).toMatchObject({ uniqueTasks: 1, repetitions: 3, tasks: 3, totalTurns: 9, totalModelCalls: 9, meanModelCalls: 3 });
   });
 
   it("runs with bounded concurrency while preserving report order", async () => {

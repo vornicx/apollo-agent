@@ -32,7 +32,7 @@ function truncate(text: string, max: number): string {
 
 function runCommand(command: string, cwd: string, timeoutMs: number): Promise<string> {
   return new Promise((resolvePromise) => {
-    const child = spawn(command, { shell: true, cwd });
+    const child = spawn("/bin/sh", ["-c", command], { cwd });
     let out = "";
     const append = (b: Buffer) => {
       out += b.toString("utf8");

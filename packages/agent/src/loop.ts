@@ -11,6 +11,8 @@ export interface AgentStep {
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
+  durationMs?: number;
+  ttftMs?: number;
 }
 
 export interface AgentResult {
@@ -75,6 +77,8 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
         costUsd: completion.costUsd,
         inputTokens: completion.usage?.inputTokens,
         outputTokens: completion.usage?.outputTokens,
+        durationMs: Math.round(completion.seconds * 1000),
+        ttftMs: completion.ttftMs,
       };
       steps.push(record);
       options.onStep?.(record);
@@ -82,16 +86,22 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
     }
 
     messages.push({ role: "assistant", content: completion.text, toolCalls });
-    // Independent tool calls in one turn run concurrently; results keep call order.
-    const toolResults = await Promise.all(
-      toolCalls.map(async (call): Promise<AgentStep["toolResults"][number]> => {
+    const execute = async (call: ToolCall): Promise<AgentStep["toolResults"][number]> => {
         options.onToolCall?.(call);
         if (options.onConfirm && tools.isDestructive(call.name) && !(await options.onConfirm(call))) {
           return { id: call.id, name: call.name, result: `CONFIRMATION_REQUIRED: "${call.name}" was not approved; do not retry it — find another way or ask the user.` };
         }
         return { id: call.id, name: call.name, result: await tools.execute(call) };
-      }),
-    );
+    };
+    // Pure reads are safe to fan out. If a batch contains any side effect,
+    // preserve model order so reads cannot race writes and two writes cannot
+    // corrupt the same workspace concurrently.
+    const toolResults: AgentStep["toolResults"] = [];
+    if (toolCalls.some((call) => tools.isDestructive(call.name))) {
+      for (const call of toolCalls) toolResults.push(await execute(call));
+    } else {
+      toolResults.push(...await Promise.all(toolCalls.map(execute)));
+    }
     for (const r of toolResults) messages.push({ role: "tool", toolCallId: r.id, name: r.name, content: r.result });
     const record: AgentStep = {
       step,
@@ -101,6 +111,8 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentResult> {
       costUsd: completion.costUsd,
       inputTokens: completion.usage?.inputTokens,
       outputTokens: completion.usage?.outputTokens,
+      durationMs: Math.round(completion.seconds * 1000),
+      ttftMs: completion.ttftMs,
     };
     steps.push(record);
     options.onStep?.(record);

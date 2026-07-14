@@ -96,16 +96,26 @@ the model can actively reach for mid-task, not just context stuffed into the pro
 a structural `McpToolSource` interface, so `@archic/apollo-agent` stays decoupled from
 `@archic/apollo-mcp`.
 
-## The cognitive cycle (`@archic/apollo-cortex`)
+## Adaptive execution depth (`@archic/apollo-cortex`)
 
-`runAgent` is a tool loop; `runCortex` is a **disciplined cognitive process** on top of it —
-Apollo's adaptation of [cortex-harness](https://github.com/vornicx/cortex-harness). It runs
-**PLAN → (ACT → CRITIC)+ → VERIFY → FINALIZE** with the guardrails that make even a weak model
-behave like a first-line agent:
+`runCortex` selects the cheapest safe lane before it contacts a model. The selector is local,
+deterministic, effectively free, visible as `depth.selected`, and overridable with
+`--depth auto|instant|agent|deep`:
+
+- **INSTANT** — exact greetings and acknowledgements resolve locally with zero provider calls; a
+  caller-forced instant prompt uses one text completion. No planner, critic, verifier, tools, or
+  memory startup. The response is streamed and recorded as one verified execution.
+- **AGENT** — ordinary work uses one routed `runAgent` loop. Independent read tools may execute in
+  parallel; any batch containing a write or shell action stays ordered. File changes are reread,
+  shell exits and user checks are evaluated deterministically, and policy gates remain authoritative.
+- **DEEP** — complex, high-risk, architectural, research, security, deployment, destructive, or
+  explicitly forced work runs Apollo's full [cortex-harness](https://github.com/vornicx/cortex-harness)
+  adaptation: **PLAN → (ACT → CRITIC)+ → VERIFY → FINALIZE**.
+
+The deep lane keeps the guardrails that make even a weak model behave like a first-line agent:
 
 - **PLAN** — a structured plan (steps with dependencies, per-step expected outcomes, read-only
-  `doneCriteria`, a justified confidence) via `runStructured`. Trivial goals take a direct-answer
-  fast path checked by one critic.
+  `doneCriteria`, a justified confidence) via `runStructured`.
 - **ACT** — each step runs the agentic loop with tools; the executor reports through a deterministic
   line protocol (`INTENT`, `BELIEF[key]`, `STEP_DONE[id]`, `STEP_FAILED[id]`) so the harness — not
   the model's goodwill — owns step transitions and a working memory of beliefs.
@@ -117,13 +127,13 @@ behave like a first-line agent:
   and turns; a first loop forces a replan, a second an **honest stop**. Nothing is ever reported as
   succeeded that wasn't verified.
 
-**What makes it "maximally Apollo":** cortex-harness hardcodes an orchestrator/worker model split.
+**What makes the deep lane "maximally Apollo":** cortex-harness hardcodes an orchestrator/worker model split.
 Apollo routes *each cognitive phase through the autorouter* as its own task kind — PLAN as
 `planning`/frontier (strongest reasoning), CRITIC as `code-review`/hard, VERIFY as `debugging`/hard,
 each step as its own kind — so the strongest reasoning model plans and criticizes while cheaper
 models act, and it falls out of the routing data. Every phase emits typed Apollo events
 (`plan.produced`, `step.started/finished`, `belief.recorded`, `critic.reviewed`, `meta.stop`), so
-the whole cognitive cycle streams to the dashboard and records to `.apollo/runs` like any other run.
+every lane streams output and progress to the dashboard and records to `.apollo/runs` like any other run.
 It runs over the `ProviderHub` (subscriptions + tool calls) and its executor can use MCP tools —
 including Midas memory. `apollo cortex "<goal>"` drives it.
 
@@ -238,8 +248,8 @@ model, real cost, and token usage; every cortex phase emits its own execution pa
 verification verdicts reference the attempt of the *acting* execution so credit/blame lands on
 the model that did the work, not the verifier. `collectSamples`/`aggregateTelemetry` (core,
 pure functions over the JSONL logs) derive per-model and per-kind measurements — wall time,
-median throughput, cost, verification pass rate. `apollo stats` renders them; `apollo calibrate`
-proposes profile overrides **only for directly measured fields** (throughput today), and
+p50 time-to-first-token, effective end-to-end throughput, cost, verification pass rate. `apollo stats` renders them; `apollo calibrate`
+proposes profile overrides **only for directly measured fields** (effective throughput today), and
 `--write` merges them into `apollo.config.json` with the profile's unmeasured fields preserved.
 Quality/capability numbers are deliberately not inferred from verify rates — that needs a
 benchmark suite (M4), not a heuristic dressed up as data.
@@ -247,7 +257,7 @@ benchmark suite (M4), not a heuristic dressed up as data.
 ## The interactive session (`apollo`)
 
 The no-argument entry point is the harness as a place to work, not a flag zoo: a readline REPL
-where a typed goal runs the full cognitive cycle with live events, and session state
+where a typed goal runs the adaptive runtime with live events, and session state
 (`/workspace`, `/check`, `/budget`, `/turns`, `/pin`, `/mcp`, `/yes`) persists across runs.
 Destructive tool calls surface inline — `⚠ allow write_file(...)? [y/N/a=always]` — through the
 same `confirm` hook the flags drive, so the human is in the loop per call instead of per run.
@@ -296,20 +306,19 @@ The intended loop: `buildContext` before planning, `remember` durable outcomes a
 - **M2.6 ✅ (tools everywhere + MCP)** — tool calls + structured output for the remaining adapters
   (Google, Gemini-CLI, Codex), and MCP tools as agent tools (`apollo agent --mcp`, Midas bridge) —
   verified live (real Midas server spawned, `midas__recall` called inside the loop).
-- **M2.7 ✅ (cognitive cycle)** — `@archic/apollo-cortex`: the plan→(act→critic)+→verify→finalize
-  cycle adapted from cortex-harness, each phase autorouted, with adversarial critic, independent
-  verifier, meta-controller loop/budget/turn guards, honest stops, and belief memory — verified live
-  (all phases routed, verification-driven replans, honest turn-limit stop). `apollo cortex`.
+- **M2.7 ✅ (adaptive Cortex)** — deterministic instant/agent/deep selection, one-call conversation,
+  a single-agent lane with deterministic post-checks, and the full autorouted
+  plan→(act→critic)+→verify→finalize cycle for complex/high-risk work. `apollo cortex --depth`.
 - **M2.8 ✅ (real work + safety)** — workspace tools (`write_file`/`edit_file`/`run_command`,
   path-jailed, destructive-flagged) for the agent and cortex executor; per-tool permission gating
-  (confirm policy → CONFIRMATION_REQUIRED); parallel tool execution; the verifier's active
+  (confirm policy → CONFIRMATION_REQUIRED); parallel independent reads with ordered side effects; the verifier's active
   read-only tool loop. Verified live: `--workspace --yes` wrote a real file in the jail.
 - **M2.9 ✅ (ground truth + UI)** — deterministic (no-model) verifier checks (`file_exists`,
   `file_contains`, `command_succeeds`) the harness runs itself, planner-emitted and user-enforced
   (`apollo cortex --check …`), so a model can't hallucinate past a failing file/command check;
   dashboard run search + two-run diff. Verified live + unit-tested over real fs/shell.
 - **M3 ✅ (telemetry loop + interactive)** — measured telemetry over the recorded runs
-  (`apollo stats`: latency, throughput, cost, verification outcomes per model and task kind) and
+  (`apollo stats`: TTFT, wall time, effective throughput, cost, verification outcomes per model and task kind) and
   measurement-backed profile calibration (`apollo calibrate --write`); the event stream now carries
   task kind and token usage per execution, and every cortex phase is an execution on the stream.
   Plus the interactive terminal session (`apollo` no-arg REPL) with inline destructive-tool

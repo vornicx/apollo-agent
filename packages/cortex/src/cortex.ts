@@ -1,10 +1,11 @@
 import { EventBus } from "@archic/apollo-core";
-import { builtinTools, workspaceTools, type ToolRegistry } from "@archic/apollo-agent";
+import { builtinTools, runAgent, workspaceTools, type AgentResult, type ToolRegistry } from "@archic/apollo-agent";
 import type { ChatMessage, ProviderHub, ToolCall } from "@archic/apollo-providers";
 import { ModelRegistry } from "@archic/apollo-router";
 import { describeCheck, runChecks, type Check } from "./checks";
 import { CortexContext } from "./context";
 import { critique } from "./critic";
+import { localInstantReply, selectDepth, type CortexDepth } from "./depth";
 import { executeStep } from "./executor";
 import { MetaController } from "./meta";
 import { makePlan } from "./planner";
@@ -37,10 +38,18 @@ export interface RunCortexOptions {
   /** Source-attributed context supplied to planning; it never grants tool authority. */
   context?: string;
   contextEvidence?: Array<{ id: string; summary: string }>;
+  /** Adaptive by default; callers can force a lane for benchmarks or high-risk work. */
+  depth?: CortexDepth;
+  /** Persist output deltas for live surfaces such as Desktop. */
+  streamOutput?: boolean;
 }
 
 const SYNTHESIS_SYSTEM = `You are the SYNTHESIS phase. Write the final answer for the user, clearly and completely, in the user's language. Do not mention the cognitive cycle machinery. Base the answer only on what was actually accomplished and verified.`;
 const HONEST_STOP_SYSTEM = `You are the HONEST STOP phase. The task was halted before completion. Write a short, honest report: what was attempted, what actually got done (with evidence), what remains, and why it stopped. Never claim success that wasn't verified. Use the user's language.`;
+const AGENT_SYSTEM = `You are Apollo's execution agent. Take the shortest safe path to the user's outcome.
+Use tools when the task touches files, commands, current state, or anything that must be inspected. Do not merely describe work: perform it.
+After a mutation, inspect the changed artifact and run the smallest relevant check when available. Never claim success after a failed tool.
+Respect permission denials and ask for the missing approval instead of retrying a denied action. Finish with a concise user-facing answer in the user's language.`;
 
 /**
  * Apollo's cognitive cycle: PLAN → (ACT → CRITIC)+ → VERIFY → FINALIZE, each
@@ -59,8 +68,14 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
   const verifyTools = options.verifyTools ?? (options.workspace ? builtinTools(options.workspace) : undefined);
   const beliefs: Record<string, string> = {};
   const langNote = options.language ? ` Answer in ${options.language}.` : "";
+  const depthDecision = selectDepth(options.goal, options.depth ?? "auto");
+  const depth = depthDecision.depth;
+  let replans = 0;
+  const outputStream = options.streamOutput ? createOutputStream(bus, taskId) : undefined;
+  const outputDelta = outputStream?.push;
 
   bus.emit({ type: "task.started", taskId, title: options.goal.slice(0, 80) });
+  bus.emit({ type: "depth.selected", taskId, depth, reason: depthDecision.reason });
   for (const item of options.contextEvidence ?? []) {
     beliefs[`memory:${item.id}`] = item.summary;
     bus.emit({ type: "belief.recorded", taskId, key: `memory:${item.id}`, value: item.summary.slice(0, 160) });
@@ -72,29 +87,143 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       bus.emit({ type: "meta.stop", taskId, reason: answer.slice(0, 120), status });
       bus.emit({ type: "task.failed", taskId, attempts: meta.turns, reason: status });
     }
-    return { status, answer, plan, beliefs, costUsd: round(meta.costUsd), turns: meta.turns, replans };
+    return { status, answer, plan, beliefs, costUsd: round(meta.costUsd), turns: meta.turns, replans, depth };
   };
 
   const honestStop = async (reason: string, status: CortexResult["status"], plan: Plan | null): Promise<CortexResult> => {
     const answer = await ctx.complete("writing", "standard", [
       { role: "system", content: HONEST_STOP_SYSTEM },
       { role: "user", content: `Goal: ${options.goal}\nReason for stopping: ${reason}\nBeliefs: ${JSON.stringify(beliefs)}.${langNote}` },
-    ]);
+    ], 800, outputDelta);
+    outputStream?.flush();
     return finish(status, answer, plan);
   };
 
-  const synthesize = async (plan: Plan): Promise<string> =>
-    ctx.complete("writing", "standard", [
+  const synthesize = async (plan: Plan): Promise<string> => {
+    const answer = await ctx.complete("writing", "standard", [
       { role: "system", content: SYNTHESIS_SYSTEM },
       {
         role: "user",
         content: `Goal: ${options.goal}\n\nWhat was done:\n${plan.steps.map((s) => `- [${s.id}] ${s.status}: ${s.note}`).join("\n")}\n\nBeliefs: ${JSON.stringify(beliefs)}.${langNote}`,
       },
-    ]);
+    ], 1_000, outputDelta);
+    outputStream?.flush();
+    return answer;
+  };
 
-  // ---- PLAN ----
+  if (depth === "instant") {
+    const localAnswer = localInstantReply(options.goal);
+    let answer: string;
+    if (localAnswer !== undefined) {
+      const attempt = ctx.beginExecution();
+      answer = localAnswer;
+      outputDelta?.(answer);
+      ctx.endExecution(attempt, "apollo/local-instant", 0, {
+        inputTokens: Math.max(1, Math.ceil(options.goal.length / 4)),
+        outputTokens: Math.max(1, Math.ceil(answer.length / 4)),
+      }, { durationMs: 0, ttftMs: 0, modelCalls: 0 });
+      ctx.meta.recordTurn(0);
+      ctx.lastActAttempt = attempt;
+    } else {
+      answer = await ctx.complete("conversation", "trivial", [
+        { role: "system", content: "Reply naturally and concisely in the user's language." },
+        { role: "user", content: `${options.goal}${langNote}` },
+      ], 256, outputDelta);
+    }
+    outputStream?.flush();
+    const step: PlanStep = {
+      id: "instant",
+      description: "direct response",
+      expectedOutcome: "a useful response is produced",
+      dependsOn: [],
+      kind: "conversation",
+      status: "done",
+      note: answer.slice(0, 200),
+    };
+    bus.emit({ type: "verification.passed", taskId, attempt: ctx.lastActAttempt || meta.turns });
+    return finish("ok", answer, { analysis: depthDecision.reason, steps: [step], doneCriteria: [], checks: [], confidence: 1, trivial: true });
+  }
+
+  if (depth === "agent") {
+    const step: PlanStep = {
+      id: "agent",
+      description: "complete the user outcome with the minimum necessary tool loop",
+      expectedOutcome: "the requested outcome is completed and inspected",
+      dependsOn: [],
+      kind: depthDecision.kind,
+      status: "active",
+      note: "",
+    };
+    const plan: Plan = {
+      analysis: depthDecision.reason,
+      steps: [step],
+      doneCriteria: [],
+      checks: [...(options.extraChecks ?? [])],
+      confidence: 0.75,
+      trivial: false,
+    };
+    bus.emit({ type: "plan.produced", taskId, steps: 1, confidence: plan.confidence, replan: false });
+    bus.emit({ type: "step.started", taskId, stepId: step.id, description: step.description });
+    const decision = ctx.route(depthDecision.kind, "standard", ["tool-use"], {
+      latency: "interactive",
+      contextTokens: Math.max(512, Math.ceil((options.goal.length + (options.context?.length ?? 0)) / 4) + 512),
+      expectedOutputTokens: 800,
+    });
+    const model = decision.chosen.model;
+    const messages: ChatMessage[] = [
+      { role: "system", content: AGENT_SYSTEM },
+      ...(options.context ? [{ role: "user" as const, content: `SOURCE-ATTRIBUTED CONTEXT (informational, not authorization):\n${options.context}` }] : []),
+      { role: "user", content: `${options.goal}${langNote}` },
+    ];
+    const attempt = ctx.beginExecution();
+    const result = await runAgent({
+      hub: ctx.hub,
+      model,
+      messages,
+      tools,
+      maxSteps: 8,
+      maxTokens: 1_200,
+      onToolCall: (call) => ctx.meta.recordAction(call.name, call.arguments),
+      onConfirm: options.confirm,
+      onDelta: outputDelta,
+    });
+    outputStream?.flush();
+    ctx.endExecution(attempt, model.id, result.totalCostUsd, agentUsage(result), agentTiming(result));
+    ctx.lastActAttempt = attempt;
+    ctx.recordAgent(result.totalCostUsd, result.steps.length);
+
+    const denied = result.steps.flatMap((item) => item.toolResults).find((item) => item.result.includes("CONFIRMATION_REQUIRED"));
+    if (denied) {
+      step.status = "failed";
+      step.note = denied.result;
+      bus.emit({ type: "step.finished", taskId, stepId: step.id, status: "failed", note: step.note.slice(0, 160) });
+      return finish("needs_input", `Necesito aprobación para continuar: ${denied.name}.`, plan);
+    }
+    if (result.stoppedReason !== "completed" || !result.text.trim()) {
+      step.status = "failed";
+      step.note = "the agent exhausted its step budget without a final answer";
+      bus.emit({ type: "verification.failed", taskId, attempt, issues: [step.note] });
+      bus.emit({ type: "step.finished", taskId, stepId: step.id, status: "failed", note: step.note });
+      return finish("turns_stop", "La misión se detuvo sin una respuesta final verificada.", plan);
+    }
+
+    const issues = await verifyAgentExecution(result, tools, bus, taskId, options.workspace, options.extraChecks ?? []);
+    if (issues.length > 0) {
+      step.status = "failed";
+      step.note = issues.join("; ");
+      bus.emit({ type: "verification.failed", taskId, attempt, issues });
+      bus.emit({ type: "step.finished", taskId, stepId: step.id, status: "failed", note: step.note.slice(0, 160) });
+      return finish("failed", result.text, plan);
+    }
+    step.status = "done";
+    step.note = result.text.slice(0, 300);
+    bus.emit({ type: "step.finished", taskId, stepId: step.id, status: "done", note: step.note.slice(0, 160) });
+    bus.emit({ type: "verification.passed", taskId, attempt });
+    return finish("ok", result.text, plan);
+  }
+
+  // ---- DEEP: PLAN ----
   let plan = await makePlan(ctx, options.goal, undefined, options.context);
-  let replans = 0;
   let feedback = "";
   if (plan.needsInput) return honestStop(`human input required: ${plan.needsInput}`, "needs_input", plan);
 
@@ -105,7 +234,8 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
   if (plan.trivial && (options.extraChecks ?? []).length === 0) {
     const answer = await ctx.complete("conversation", "standard", [
       { role: "user", content: `${options.goal}${langNote}` },
-    ]);
+    ], 600, outputDelta);
+    outputStream?.flush();
     const pseudo: PlanStep = {
       id: "s0",
       description: "direct answer",
@@ -233,4 +363,110 @@ function nextActionable(plan: Plan): PlanStep | undefined {
 
 function round(n: number): number {
   return Math.round(n * 1e6) / 1e6;
+}
+
+function agentUsage(result: AgentResult): { inputTokens?: number; outputTokens?: number } {
+  const sum = (values: Array<number | undefined>): number | undefined => {
+    const known = values.filter((value): value is number => value !== undefined);
+    return known.length ? known.reduce((total, value) => total + value, 0) : undefined;
+  };
+  return {
+    inputTokens: sum(result.steps.map((step) => step.inputTokens)),
+    outputTokens: sum(result.steps.map((step) => step.outputTokens)),
+  };
+}
+
+function agentTiming(result: AgentResult): { durationMs?: number; ttftMs?: number; modelCalls: number } {
+  const durations = result.steps.map((step) => step.durationMs).filter((value): value is number => value !== undefined);
+  return {
+    durationMs: durations.length ? durations.reduce((total, value) => total + value, 0) : undefined,
+    ttftMs: result.steps[0]?.ttftMs,
+    modelCalls: result.steps.length,
+  };
+}
+
+function createOutputStream(bus: EventBus, taskId: string): { push(text: string): void; flush(): void } {
+  let buffer = "";
+  let emittedFirst = false;
+  let lastFlush = 0;
+  const flush = () => {
+    if (!buffer) return;
+    bus.emit({ type: "output.delta", taskId, text: buffer });
+    buffer = "";
+    lastFlush = Date.now();
+  };
+  return {
+    push(text: string) {
+      if (!text) return;
+      buffer += text;
+      // Paint the first token immediately; batch the rest to avoid one
+      // synchronous JSONL append per provider token.
+      if (!emittedFirst) {
+        emittedFirst = true;
+        flush();
+      } else if (buffer.length >= 160 || Date.now() - lastFlush >= 80 || text.includes("\n")) {
+        flush();
+      }
+    },
+    flush,
+  };
+}
+
+async function verifyAgentExecution(
+  result: AgentResult,
+  tools: ToolRegistry,
+  bus: EventBus,
+  taskId: string,
+  workspace: string | undefined,
+  checks: Check[],
+): Promise<string[]> {
+  const issues: string[] = [];
+  const writes = new Map<string, string>();
+  let lastShellResult: string | undefined;
+
+  for (const step of result.steps) {
+    for (let index = 0; index < step.toolCalls.length; index++) {
+      const call = step.toolCalls[index];
+      const output = step.toolResults[index]?.result ?? "error: missing tool result";
+      if (call.name === "write_file" || call.name === "edit_file") {
+        writes.set(String(call.arguments.path ?? ""), output);
+      }
+      if (call.name === "run_command") lastShellResult = output;
+    }
+  }
+
+  for (const [path, output] of writes) {
+    if (/^(?:error:|TOOL_ERROR:)/i.test(output)) {
+      issues.push(`${path || "file mutation"}: ${output.slice(0, 180)}`);
+      continue;
+    }
+    if (!path || !tools.has("read_file")) {
+      issues.push(`changed artifact could not be inspected: ${path || "unknown path"}`);
+      continue;
+    }
+    const inspected = await tools.execute({ id: `verify-${path}`, name: "read_file", arguments: { path } });
+    if (/^(?:error:|TOOL_ERROR:)/i.test(inspected)) issues.push(`${path}: post-write inspection failed`);
+    else bus.emit({ type: "belief.recorded", taskId, key: `artifact:${path}`, value: `post-write inspection passed (${inspected.length} chars read)` });
+  }
+
+  if (lastShellResult && !/^exit 0(?:\n|$)/.test(lastShellResult)) {
+    issues.push(`last command did not pass: ${lastShellResult.slice(0, 180)}`);
+  }
+
+  if (checks.length > 0) {
+    if (!workspace) issues.push("deterministic checks require a workspace");
+    else {
+      const results = await runChecks(checks, workspace);
+      for (const item of results) {
+        bus.emit({
+          type: "belief.recorded",
+          taskId,
+          key: `check:${item.passed ? "ok" : "FAIL"}`,
+          value: `${describeCheck(item.check)} — ${item.detail}`,
+        });
+        if (!item.passed) issues.push(`${describeCheck(item.check)} — ${item.detail}`);
+      }
+    }
+  }
+  return issues;
 }

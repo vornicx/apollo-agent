@@ -247,6 +247,7 @@ describe("CodexAdapter (Responses API) function calling", () => {
       tools: [weatherTool],
     });
     expect((body.tools as Array<{ type: string; name: string }>)[0]).toMatchObject({ type: "function", name: "get_weather" });
+    expect(body.parallel_tool_calls).toBe(true);
     expect(result.toolCalls).toEqual([{ id: "fc_1", name: "get_weather", arguments: { city: "Madrid" } }]);
     expect(result.stopReason).toBe("tool_calls");
   });

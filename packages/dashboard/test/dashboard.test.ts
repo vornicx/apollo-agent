@@ -101,6 +101,9 @@ describe("renderHtml", () => {
     // gold accent for changed values
     expect(html).toContain("diff-changed");
     expect(html).toContain("missionEvidence");
+    expect(html).toContain('id="mission-depth"');
+    expect(html).toContain("output.delta");
+    expect(html).toContain("liveAnswers");
   });
 
   it("ships syntactically valid mission-center client JavaScript", () => {

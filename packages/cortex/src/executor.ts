@@ -71,6 +71,10 @@ export async function executeStep(
   ctx.endExecution(execAttempt, model.id, result.totalCostUsd, {
     inputTokens: sumTokens(result.steps.map((s) => s.inputTokens)),
     outputTokens: sumTokens(result.steps.map((s) => s.outputTokens)),
+  }, {
+    durationMs: sumTokens(result.steps.map((s) => s.durationMs)),
+    ttftMs: result.steps[0]?.ttftMs,
+    modelCalls: result.steps.length,
   });
   ctx.lastActAttempt = execAttempt;
   ctx.recordAgent(result.totalCostUsd, result.steps.length);

@@ -16,6 +16,8 @@ export interface HarnessCompletion extends CompletionResult {
   /** Real cost computed from reported usage × the model's profile pricing. */
   costUsd?: number;
   seconds: number;
+  /** Wall time until the first streamed text delta (or completion for non-streaming adapters). */
+  ttftMs: number;
 }
 
 /**
@@ -68,8 +70,13 @@ export class ProviderHub {
     }
     const nativeModel = profile.nativeId ?? profile.id.slice(profile.id.indexOf("/") + 1);
     const started = Date.now();
-    const result = await adapter.complete({ ...request, model: nativeModel }, onDelta);
+    let ttftMs: number | undefined;
+    const result = await adapter.complete({ ...request, model: nativeModel }, (text) => {
+      ttftMs ??= Date.now() - started;
+      onDelta?.(text);
+    });
     const seconds = (Date.now() - started) / 1000;
+    ttftMs ??= Math.round(seconds * 1000);
 
     let costUsd: number | undefined;
     if (result.usage && (result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined)) {
@@ -77,6 +84,6 @@ export class ProviderHub {
         ((result.usage.inputTokens ?? 0) / 1_000_000) * profile.cost.inputPerMTok +
         ((result.usage.outputTokens ?? 0) / 1_000_000) * profile.cost.outputPerMTok;
     }
-    return { ...result, modelId: profile.id, costUsd, seconds };
+    return { ...result, modelId: profile.id, costUsd, seconds, ttftMs };
   }
 }

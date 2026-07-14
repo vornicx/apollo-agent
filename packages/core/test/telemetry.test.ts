@@ -17,11 +17,11 @@ function runEvents(): StampedEvent[] {
     ev(0, 1, { type: "task.started", taskId: "t", title: "x" }),
     ev(10, 2, { type: "routing.decided", taskId: "t", modelId: "a/one", reason: "r", kind: "code-generation" }),
     ev(20, 3, { type: "execution.started", taskId: "t", attempt: 1 }),
-    ev(1_020, 4, { type: "execution.completed", taskId: "t", attempt: 1, modelId: "a/one", costUsd: 0.01, outputTokens: 500 }),
+    ev(1_020, 4, { type: "execution.completed", taskId: "t", attempt: 1, modelId: "a/one", costUsd: 0.01, outputTokens: 500, ttftMs: 120, modelCalls: 2 }),
     ev(1_030, 5, { type: "verification.failed", taskId: "t", attempt: 1, issues: ["tests failed"] }),
     ev(1_040, 6, { type: "routing.decided", taskId: "t", modelId: "b/two", reason: "escalated", kind: "code-generation" }),
     ev(1_050, 7, { type: "execution.started", taskId: "t", attempt: 2 }),
-    ev(3_050, 8, { type: "execution.completed", taskId: "t", attempt: 2, modelId: "b/two", costUsd: 0.05, outputTokens: 1_000 }),
+    ev(3_050, 8, { type: "execution.completed", taskId: "t", attempt: 2, modelId: "b/two", costUsd: 0.05, outputTokens: 1_000, ttftMs: 240 }),
     ev(3_060, 9, { type: "verification.passed", taskId: "t", attempt: 2 }),
     ev(3_070, 10, { type: "task.completed", taskId: "t", attempts: 2 }),
   ];
@@ -38,6 +38,7 @@ describe("collectSamples", () => {
       durationMs: 1_000,
       costUsd: 0.01,
       outputTokens: 500,
+      ttftMs: 120,
       verified: false,
     });
     expect(samples[1]).toMatchObject({ modelId: "b/two", durationMs: 2_000, verified: true });
@@ -65,6 +66,9 @@ describe("aggregateTelemetry", () => {
     expect(a.verifyRate).toBe(0);
     expect(a.totalCostUsd).toBeCloseTo(0.01);
     expect(a.measuredTokensPerSec).toBe(500); // 500 tok / 1s
+    expect(a.p50TtftMs).toBe(120);
+    expect(a.totalModelCalls).toBe(2);
+    expect(a.avgModelCalls).toBe(2);
     expect(a.byKind[0]).toMatchObject({ kind: "code-generation", samples: 1, failed: 1 });
 
     expect(b.verifyRate).toBe(1);
@@ -96,14 +100,15 @@ describe("proposeCalibration", () => {
     ];
   }
 
-  it("proposes a measured tokensPerSec override when deviation is large enough", () => {
+  it("proposes measured effective throughput without overwriting provider token speed", () => {
     const proposals = proposeCalibration(telemetryWith(50, 6), [profile]);
     expect(proposals).toHaveLength(1);
     expect(proposals[0]).toMatchObject({
       modelId: "a/one",
       current: 100,
       measured: 50,
-      patch: { latency: { tokensPerSec: 50 } },
+      field: "latency.effectiveTokensPerSec",
+      patch: { latency: { effectiveTokensPerSec: 50 } },
     });
   });
 

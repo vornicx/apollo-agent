@@ -9,6 +9,7 @@ import {
   type Complexity,
   type ModelProfile,
   type RoutingDecision,
+  type TaskSpec,
   type TaskKind,
 } from "@archic/apollo-router";
 import type { MetaController } from "./meta";
@@ -49,8 +50,13 @@ export class CortexContext {
   }
 
   /** Route a phase and announce the decision on the stream. */
-  route(kind: TaskKind, complexity: Complexity, require?: Capability[]): RoutingDecision {
-    const decision = this.router.route({ kind, complexity, require });
+  route(
+    kind: TaskKind,
+    complexity: Complexity,
+    require?: Capability[],
+    hints: Partial<Pick<TaskSpec, "latency" | "contextTokens" | "expectedOutputTokens">> = {},
+  ): RoutingDecision {
+    const decision = this.router.route({ ...hints, kind, complexity, require });
     this.bus.emit({
       type: "routing.decided",
       taskId: this.taskId,
@@ -77,6 +83,7 @@ export class CortexContext {
     modelId: string,
     costUsd?: number,
     usage?: { inputTokens?: number; outputTokens?: number },
+    timing?: { durationMs?: number; ttftMs?: number; modelCalls?: number },
   ): void {
     this.bus.emit({
       type: "execution.completed",
@@ -86,6 +93,9 @@ export class CortexContext {
       costUsd,
       inputTokens: usage?.inputTokens,
       outputTokens: usage?.outputTokens,
+      durationMs: timing?.durationMs,
+      ttftMs: timing?.ttftMs,
+      modelCalls: timing?.modelCalls ?? 1,
     });
   }
 
@@ -100,11 +110,24 @@ export class CortexContext {
   }
 
   /** Route a phase and make a plain text completion (e.g. the final synthesis). */
-  async complete(kind: TaskKind, complexity: Complexity, messages: ChatMessage[], maxTokens = 4000): Promise<string> {
-    const decision = this.route(kind, complexity);
+  async complete(
+    kind: TaskKind,
+    complexity: Complexity,
+    messages: ChatMessage[],
+    maxTokens = 1_000,
+    onDelta?: (text: string) => void,
+  ): Promise<string> {
+    const decision = this.route(kind, complexity, undefined, {
+      latency: kind === "conversation" || kind === "writing" ? "interactive" : "background",
+      contextTokens: estimateMessageTokens(messages),
+      expectedOutputTokens: maxTokens,
+    });
     const attempt = this.beginExecution();
-    const out = await this.hub.completeForModel(decision.chosen.model, { messages, maxTokens });
-    this.endExecution(attempt, decision.chosen.model.id, out.costUsd, out.usage);
+    const out = await this.hub.completeForModel(decision.chosen.model, { messages, maxTokens }, onDelta);
+    this.endExecution(attempt, decision.chosen.model.id, out.costUsd, out.usage, {
+      durationMs: Math.round(out.seconds * 1000),
+      ttftMs: out.ttftMs,
+    });
     this.meta.recordTurn(out.costUsd ?? 0);
     return out.text;
   }
@@ -120,12 +143,20 @@ export class CortexContext {
     schema: Record<string, unknown>,
     name: string,
   ): Promise<{ value: T; model: ModelProfile }> {
-    const decision = this.route(kind, complexity, ["tool-use"]);
+    const decision = this.route(kind, complexity, ["tool-use"], {
+      contextTokens: estimateMessageTokens(messages),
+      expectedOutputTokens: 1_200,
+    });
     const model = decision.chosen.model;
     const attempt = this.beginExecution();
-    const out = await runStructured<T>({ hub: this.hub, model, messages, schema, name, maxTokens: 4000 });
-    this.endExecution(attempt, model.id, out.costUsd, out.usage);
+    const out = await runStructured<T>({ hub: this.hub, model, messages, schema, name, maxTokens: 1_200 });
+    this.endExecution(attempt, model.id, out.costUsd, out.usage, { durationMs: out.durationMs, ttftMs: out.ttftMs });
     this.meta.recordTurn(out.costUsd);
     return { value: out.value, model };
   }
+}
+
+function estimateMessageTokens(messages: ChatMessage[]): number {
+  const chars = messages.reduce((sum, message) => sum + message.content.length, 0);
+  return Math.max(256, Math.ceil(chars / 4) + 128);
 }

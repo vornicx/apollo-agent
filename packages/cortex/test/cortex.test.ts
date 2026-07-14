@@ -73,6 +73,7 @@ describe("runCortex", () => {
       goal: "create a sum.js file",
       tools: new ToolRegistry(),
       bus,
+      depth: "deep",
     });
 
     expect(result.status).toBe("ok");
@@ -93,10 +94,13 @@ describe("runCortex", () => {
       plan: { analysis: "trivial", trivial: true, confidence: 0.95, doneCriteria: [], steps: [] },
       synthesis: "42 is the answer.",
     });
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "what is 6 times 7?", tools: new ToolRegistry(), bus });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "hola", tools: new ToolRegistry(), bus });
     expect(result.status).toBe("ok");
+    expect(result.depth).toBe("instant");
     expect(result.plan?.steps).toHaveLength(1);
-    expect(result.plan?.steps[0].id).toBe("s0");
+    expect(result.plan?.steps[0].id).toBe("instant");
+    expect(bus.history().some((event) => event.type === "routing.decided")).toBe(false);
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "execution.completed", modelId: "apollo/local-instant" }));
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "verification.passed" }));
     expect(bus.history().some((event) => event.type === "critic.reviewed")).toBe(false);
   });
@@ -125,7 +129,7 @@ describe("runCortex", () => {
     };
     const hub = new ProviderHub().register(adapter);
     const bus = new EventBus();
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "do the thing", tools: new ToolRegistry(), bus });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "do the thing", tools: new ToolRegistry(), bus, depth: "deep" });
 
     expect(result.status).toBe("ok");
     expect(verifyCalls).toBe(2);
@@ -147,6 +151,7 @@ describe("runCortex", () => {
       tools: new ToolRegistry(),
       limits: { budgetUsd: 0.0001 },
       bus,
+      depth: "deep",
     });
     expect(result.status).toBe("budget_stop");
     expect(bus.history().some((e) => e.type === "meta.stop")).toBe(true);
@@ -166,6 +171,7 @@ describe("runCortex", () => {
       tools: new ToolRegistry(),
       limits: { maxReplans: 1, maxTurns: 12 },
       bus,
+      depth: "deep",
     });
     expect(result.status).not.toBe("ok");
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "step.finished", status: "failed" }));
@@ -178,7 +184,7 @@ describe("runCortex", () => {
       executorText: "STEP_DONE[s1]: verified",
       synthesis: "Done.",
     });
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "test it", tools: new ToolRegistry() });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "test it", tools: new ToolRegistry(), depth: "deep" });
     expect(result.status).toBe("ok");
     expect(result.plan?.steps[0].kind).toBe("code-generation");
   });
@@ -189,7 +195,7 @@ describe("runCortex", () => {
       executorText: "QUESTION: Which files should be deleted?",
       synthesis: "Input is required.",
     });
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "delete old files", tools: new ToolRegistry() });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "delete old files", tools: new ToolRegistry(), depth: "deep" });
     expect(result.status).toBe("needs_input");
     expect(result.answer).toContain("Input is required");
   });
@@ -203,7 +209,7 @@ describe("runCortex", () => {
       verification: { passed: false, perCriterion: [], missing: ["speculative"], feedback: "reject" },
       synthesis: "Ground truth passed.",
     });
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "finish", workspace, tools: new ToolRegistry(), extraChecks: [{ type: "file_equals", path: "done.txt", text: "done" }] });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "finish", workspace, tools: new ToolRegistry(), extraChecks: [{ type: "file_equals", path: "done.txt", text: "done" }], depth: "deep" });
     expect(result.status).toBe("ok");
     expect(result.answer).toBe("Ground truth passed.");
     expect(result.plan?.steps[1].status).toBe("pending");
@@ -215,8 +221,23 @@ describe("runCortex", () => {
       plan: { analysis: "unsafe ambiguity", trivial: false, confidence: 0.2, needsInput: "Which files count as old?", doneCriteria: [], checks: [], steps: [] },
       synthesis: "Please define which files count as old.",
     });
-    const result = await runCortex({ hub, registry: registryWith(model()), goal: "delete old files", tools: new ToolRegistry(), bus });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "delete old files", tools: new ToolRegistry(), bus, depth: "deep" });
     expect(result.status).toBe("needs_input");
     expect(bus.history().some((event) => event.type === "step.started")).toBe(false);
+  });
+
+  it("uses one agent execution for ordinary auto-depth work", async () => {
+    const bus = new EventBus();
+    const hub = scriptedHub({
+      plan: { analysis: "unused", trivial: false, confidence: 1, doneCriteria: [], steps: [] },
+      synthesis: "A concise answer.",
+    });
+    const result = await runCortex({ hub, registry: registryWith(model()), goal: "Explain this concept briefly", tools: new ToolRegistry(), bus });
+    expect(result.status).toBe("ok");
+    expect(result.depth).toBe("agent");
+    expect(result.turns).toBe(1);
+    expect(bus.history().filter((event) => event.type === "execution.started")).toHaveLength(1);
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "execution.completed", modelCalls: 1 }));
+    expect(bus.history().some((event) => event.type === "critic.reviewed")).toBe(false);
   });
 });

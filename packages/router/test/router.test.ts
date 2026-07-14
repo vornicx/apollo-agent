@@ -52,6 +52,14 @@ describe("Router", () => {
     expect(decision.chosen.model.id).toBe("test/cheap");
   });
 
+  it("prefers measured end-to-end throughput when runtime telemetry is available", () => {
+    const measured: ModelProfile = { ...cheap, id: "test/measured", latency: { ...cheap.latency } };
+    measured.latency.effectiveTokensPerSec = 100;
+    const router = makeRouter([measured]);
+    const decision = router.route({ kind: "conversation", complexity: "standard", expectedOutputTokens: 200 });
+    expect(decision.chosen.estimatedSeconds).toBe(2);
+  });
+
   it("routes frontier work to the premium model and records the floor elimination", () => {
     const decision = makeRouter().route({ kind: "code-generation", complexity: "frontier" });
     expect(decision.chosen.model.id).toBe("test/premium");

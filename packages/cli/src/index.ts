@@ -39,7 +39,7 @@ import {
   type AgentStep,
 } from "@archic/apollo-agent";
 import { CORE_BENCHMARK_TASKS, runBenchmark, type BenchmarkTask, type BenchmarkVariant } from "@archic/apollo-benchmark";
-import { describeCheck, parseCheckSpecs, runChecks, runCortex, type Check } from "@archic/apollo-cortex";
+import { describeCheck, localInstantReply, parseCheckSpecs, runChecks, runCortex, selectDepth, type Check, type CortexDepth } from "@archic/apollo-cortex";
 import { CONFIG_FILENAME, buildRegistry, loadConfig, resolveCredentials, type ApolloConfig } from "@archic/apollo-config";
 import { MidasMemory, buildGroundedContext, type MemoryEntry } from "@archic/apollo-memory";
 import { StdioMcpClient } from "@archic/apollo-mcp";
@@ -85,6 +85,7 @@ const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 
 const TASK_KINDS = Object.keys(KIND_CAPABILITY_MIX) as TaskKind[];
 const COMPLEXITIES = Object.keys(COMPLEXITY_WEIGHTS) as Complexity[];
+const DEPTHS: CortexDepth[] = ["auto", "instant", "agent", "deep"];
 
 function parseFlags(argv: string[]): Map<string, string | true> {
   const flags = new Map<string, string | true>();
@@ -266,6 +267,24 @@ const STATE_DIR = resolvePath(process.env.APOLLO_STATE_DIR ?? join(process.cwd()
 const RUNS_DIR = join(STATE_DIR, "runs");
 const MISSIONS_DIR = join(STATE_DIR, "missions");
 
+/** Apply measured end-to-end speed in memory; user config remains untouched. */
+function buildMeasuredRegistry(config: ApolloConfig): ModelRegistry {
+  const registry = buildRegistry(config);
+  for (const measured of telemetryFromDir(RUNS_DIR)) {
+    if (measured.throughputSamples < 5 || !measured.measuredTokensPerSec) continue;
+    const profile = registry.get(measured.modelId);
+    if (!profile) continue;
+    registry.update(profile.id, {
+      latency: {
+        ...profile.latency,
+        ttftMs: measured.p50TtftMs === undefined ? profile.latency.ttftMs : Math.max(0, Math.round(measured.p50TtftMs)),
+        effectiveTokensPerSec: Math.max(1, Math.round(measured.measuredTokensPerSec)),
+      },
+    });
+  }
+  return registry;
+}
+
 /** Where this run records its event stream. --no-record disables; --record <path> overrides. */
 function recordPathFor(flags: Map<string, string | true>, runId: string): string | undefined {
   if (flags.get("no-record") === true) return undefined;
@@ -296,20 +315,23 @@ function persistMissionContract(id: string, goal: string, bus: EventBus, workspa
   return writeMissionBundle(MISSIONS_DIR, mission, outcomeFromEvents(mission, bus.history(), answer));
 }
 
-function eventLine(event: StampedEvent, t0: number): string {
+function eventLine(event: StampedEvent, t0: number): string | undefined {
   const at = dim(`[+${((event.at - t0) / 1000).toFixed(2)}s]`);
   switch (event.type) {
     case "task.started":
       return `${at} ${bold("▸ task.started")}        ${event.title}`;
     case "task.planned":
       return `${at} ${bold("▸ task.planned")}        ${event.summary}`;
+    case "depth.selected":
+      return `${at} ${cyan(`◇ depth.${event.depth}`)}        ${dim(event.reason)}`;
     case "routing.decided":
       return `${at} ${cyan("⇢ routing.decided")}     ${cyan(event.modelId)}\n${dim(`             ${event.reason}`)}`;
     case "execution.started":
       return `${at} ${dim(`⚙ execution.started    attempt ${event.attempt}`)}`;
     case "execution.completed": {
       const cost = event.costUsd !== undefined ? ` · $${event.costUsd.toFixed(4)}` : "";
-      return `${at} ${dim(`⚙ execution.completed  attempt ${event.attempt}${event.modelId ? ` · ${event.modelId}` : ""}${cost}`)}`;
+      const calls = event.modelCalls !== undefined ? ` · ${event.modelCalls} model call(s)` : "";
+      return `${at} ${dim(`⚙ execution.completed  attempt ${event.attempt}${event.modelId ? ` · ${event.modelId}` : ""}${calls}${cost}`)}`;
     }
     case "execution.failed":
       return `${at} ${red(`⚙ execution.failed     attempt ${event.attempt}: ${event.error}`)}`;
@@ -335,14 +357,21 @@ function eventLine(event: StampedEvent, t0: number): string {
       return `${at} ${event.decision === "allow" ? green("◆ permission allow") : yellow("◆ permission deny")} ${event.tool} · ${event.risk} ${dim(`— ${event.reason}`)}`;
     case "meta.stop":
       return `${at} ${yellow(bold(`■ meta.stop            ${event.status}: ${event.reason}`))}`;
+    case "output.delta":
+      return undefined;
   }
+}
+
+function printEvent(event: StampedEvent, t0: number): void {
+  const line = eventLine(event, t0);
+  if (line) console.log(line);
 }
 
 // ── commands ────────────────────────────────────────────────────────────────
 
 function cmdModels(): void {
   const { config, path } = loadConfig();
-  const registry = buildRegistry(config);
+  const registry = buildMeasuredRegistry(config);
   console.log(bold("\nApollo model registry") + dim(path ? `  (defaults + ${path})` : "  (seed defaults)") + "\n");
   const rows = registry.list({ enabledOnly: false }).map((m) => [
     m.enabled === false ? `${m.id} (disabled)` : m.id,
@@ -350,18 +379,18 @@ function cmdModels(): void {
     m.cost.inputPerMTok === 0 && m.cost.outputPerMTok === 0
       ? "free"
       : `$${m.cost.inputPerMTok}/$${m.cost.outputPerMTok}`,
-    `${m.latency.tokensPerSec} tok/s`,
-    m.notes?.includes("Seed estimate") ? "estimate" : m.provider === "ollama" ? "local" : "docs",
+    `${m.latency.effectiveTokensPerSec ?? m.latency.tokensPerSec} tok/s`,
+    m.latency.effectiveTokensPerSec ? "measured" : m.notes?.includes("Seed estimate") ? "estimate" : m.provider === "ollama" ? "local" : "docs",
   ]);
   console.log(table(["model", "context", "$/MTok in/out", "throughput", "source"], rows));
-  console.log(dim("\nNon-Anthropic profiles are seed estimates — override them in apollo.config.json.\n"));
+  console.log(dim("\nMeasured effective throughput is learned from ≥5 recorded executions; other values are profile seeds.\n"));
 }
 
 function cmdRoute(flags: Map<string, string | true>): void {
   const { config } = loadConfig();
   const { spec, policy } = specFromFlags(flags);
   try {
-    const decision = new Router(buildRegistry(config)).route(spec, { ...config.policy, ...policy });
+    const decision = new Router(buildMeasuredRegistry(config)).route(spec, { ...config.policy, ...policy });
     printDecision(decision, flags.get("explain") === true);
   } catch (error) {
     if (error instanceof RoutingError) {
@@ -381,7 +410,7 @@ function cmdRoute(flags: Map<string, string | true>): void {
 async function cmdRun(prompt: string | undefined, flags: Map<string, string | true>): Promise<void> {
   if (!prompt) return fail('run needs a prompt right after the command: apollo run "..." --kind …');
   const { config, path } = loadConfig();
-  const registry = buildRegistry(config);
+  const registry = buildMeasuredRegistry(config);
   const { spec, policy } = specFromFlags(flags);
   spec.contextTokens ??= Math.ceil(prompt.length / 4) + 500;
   spec.expectedOutputTokens ??= 2_000;
@@ -447,7 +476,7 @@ async function cmdRun(prompt: string | undefined, flags: Map<string, string | tr
   const runId = `run-${Date.now()}`;
   const bus = new EventBus();
   const t0 = Date.now();
-  bus.on("*", (event) => console.log(eventLine(event, t0)));
+  bus.on("*", (event) => printEvent(event, t0));
   const recording = startRecording(bus, recordPathFor(flags, runId));
   for (const entry of memorySources) {
     bus.emit({ type: "belief.recorded", taskId: runId, key: `memory:${entry.id}`, value: `${entry.provenance ?? "unknown"}${entry.source ? ` · ${entry.source}` : ""} · ${entry.content}` });
@@ -588,7 +617,7 @@ async function cmdRun(prompt: string | undefined, flags: Map<string, string | tr
 async function cmdAgent(prompt: string | undefined, flags: Map<string, string | true>): Promise<void> {
   if (!prompt) return fail('agent needs a prompt: apollo agent "..." [--kind ...]');
   const { config } = loadConfig();
-  const registry = buildRegistry(config);
+  const registry = buildMeasuredRegistry(config);
   const { spec, policy } = specFromFlags(flags, { kind: "research" });
   spec.require = [...new Set<Capability>([...(spec.require ?? []), "tool-use"])];
   spec.contextTokens ??= Math.ceil(prompt.length / 4) + 500;
@@ -639,7 +668,7 @@ async function cmdAgent(prompt: string | undefined, flags: Map<string, string | 
   const runId = `agent-${Date.now()}`;
   const bus = new EventBus();
   const t0 = Date.now();
-  bus.on("*", (event) => console.log(eventLine(event, t0)));
+  bus.on("*", (event) => printEvent(event, t0));
   const recording = startRecording(bus, recordPathFor(flags, runId));
 
   bus.emit({ type: "task.started", taskId: runId, title: prompt.slice(0, 80) });
@@ -712,22 +741,30 @@ async function cmdAgent(prompt: string | undefined, flags: Map<string, string | 
 }
 
 /**
- * The full cognitive cycle: plan → (act → critic)+ → verify → finalize, each
- * phase routed by the autorouter, guarded by loop/budget/turn limits with honest
- * stops. Apollo's adaptation of cortex-harness. Records to .apollo/runs.
+ * Adaptive Cortex: instant conversation, a single verified agent loop, or the
+ * full plan → (act → critic)+ → verify → finalize cycle, guarded by
+ * loop/budget/turn limits and honest stops. Records to .apollo/runs.
  */
 async function cmdCortex(goal: string | undefined, flags: Map<string, string | true>): Promise<void> {
   if (!goal) return fail('cortex needs a goal: apollo cortex "..." [--budget USD] [--mcp]');
+  const depth = typeof flags.get("depth") === "string" ? oneOf(flags.get("depth") as string, DEPTHS, "depth") : "auto";
+  const selectedDepth = selectDepth(goal, depth);
+  const localOnly = selectedDepth.depth === "instant" && localInstantReply(goal) !== undefined;
   const { config } = loadConfig();
-  const registry = buildRegistry(config);
+  const registry = localOnly ? new ModelRegistry() : buildMeasuredRegistry(config);
 
-  const { hub, notes } = await buildHub(config);
+  const { hub, notes } = localOnly
+    ? { hub: new ProviderHub(), notes: ["local instant → no provider needed"] }
+    : await buildHub(config);
   console.log(dim(`\nproviders: ${notes.join("  ·  ")}`));
-  // The cognitive phases need structured output; disable models whose provider
-  // isn't wired or can't do it, so routing only picks usable models.
+  // Filter only for capabilities the selected lane actually needs. Instant
+  // accepts plain streaming text; agent needs tools; deep also needs schemas.
   for (const m of registry.list()) {
     const adapter = hub.get(m.provider);
-    if (!adapter || adapter.supportsResponseFormat === false || adapter.supportsTools === false) {
+    const unusable = !adapter
+      || (selectedDepth.depth !== "instant" && adapter.supportsTools === false)
+      || (selectedDepth.depth === "deep" && adapter.supportsResponseFormat === false);
+    if (unusable) {
       registry.update(m.id, { enabled: false });
     }
   }
@@ -735,8 +772,9 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
   if (typeof pin === "string") {
     for (const m of registry.list()) if (m.id !== pin) registry.update(m.id, { enabled: false });
   }
-  if (registry.list().length === 0) {
-    return fail("no configured model supports the cognitive cycle (needs tool calls + structured output) — log in or add an API key");
+  if (!localOnly && registry.list().length === 0) {
+    const need = selectedDepth.depth === "deep" ? "tool calls + structured output" : selectedDepth.depth === "agent" ? "tool calls" : "text completion";
+    return fail(`no configured model supports the ${selectedDepth.depth} lane (needs ${need}) — log in or add an API key`);
   }
 
   // --workspace gives the executor jailed file + shell tools so the cycle does
@@ -747,7 +785,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
     flags.get("yes") === true || flags.get("confirm") === "all" || flags.get("confirm") === "off";
   let mcp: StdioMcpClient | undefined;
   let groundedContext: Awaited<ReturnType<typeof buildGroundedContext>> | undefined;
-  if (config.midas && (flags.get("no-memory") !== true || flags.get("mcp") === true)) {
+  if (config.midas && selectedDepth.depth !== "instant" && (flags.get("no-memory") !== true || flags.get("mcp") === true)) {
     try {
       mcp = new StdioMcpClient(config.midas);
       if (flags.get("no-memory") !== true) {
@@ -771,7 +809,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
   const runId = requestedId ?? `cortex-${Date.now()}`;
   const bus = new EventBus();
   const t0 = Date.now();
-  bus.on("*", (event) => console.log(eventLine(event, t0)));
+  bus.on("*", (event) => printEvent(event, t0));
   const recording = startRecording(bus, recordPathFor(flags, runId));
 
   const limits: Record<string, number> = {};
@@ -786,7 +824,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
     else console.log(dim(`enforced checks: ${extraChecks.map(describeCheck).join(" · ")}`));
   }
 
-  console.log(bold(`\n☀ Apollo cortex — cognitive cycle\n`));
+  console.log(bold(`\n☀ Apollo cortex — ${selectedDepth.depth} lane\n`));
   const executionPolicy = workspace ? loadExecutionPolicy(workspace) : undefined;
   const confirm = (call: ToolCall): boolean => {
     if (!executionPolicy) return approveAsked;
@@ -817,6 +855,8 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
       id: entry.id,
       summary: `${entry.provenance ?? "unknown"}${entry.source ? ` · ${entry.source}` : ""} · ${entry.content}`,
     })),
+    depth,
+    streamOutput: process.env.APOLLO_DESKTOP === "1",
   });
   recording.sink?.close();
   const missionDir = persistMissionContract(runId, goal, bus, workspace, extraChecks, result.answer);
@@ -844,7 +884,7 @@ async function cmdDemo(flags: Map<string, string | true>): Promise<void> {
   const runId = `demo-${Date.now()}`;
   const bus = new EventBus();
   const t0 = Date.now();
-  bus.on("*", (event) => console.log(eventLine(event, t0)));
+  bus.on("*", (event) => printEvent(event, t0));
   const recording = startRecording(bus, recordPathFor(flags, runId));
 
   console.log(bold("\nApollo pipeline demo — plan → route → execute → verify (execution simulated)\n"));
@@ -923,7 +963,7 @@ function cmdReplay(file: string | undefined): void {
 
   console.log(bold(`\nReplaying ${basename(target)}`) + dim(`  (${events.length} events)\n`));
   const t0 = events[0].at;
-  for (const event of events) console.log(eventLine(event, t0));
+  for (const event of events) printEvent(event, t0);
 
   const summary = summarizeRun(events);
   const color = summary.status === "succeeded" ? green : summary.status === "failed" ? red : yellow;
@@ -989,11 +1029,13 @@ function cmdStats(flags: Map<string, string | true>): void {
   console.log(bold("\nMeasured telemetry") + dim(`  (${RUNS_DIR})\n`));
   console.log(
     table(
-      ["model", "execs", "verify", "avg time", "tok/s (measured)", "cost"],
+      ["model", "execs", "calls/exec", "verify", "TTFT p50", "avg time", "tok/s (effective)", "cost"],
       telemetry.map((t) => [
         t.modelId,
         String(t.samples),
+        t.avgModelCalls === undefined ? "—" : t.avgModelCalls.toFixed(1),
         pct(t.verifyRate) + (t.verified + t.failed > 0 ? dim(` (${t.verified}/${t.verified + t.failed})`) : ""),
+        secs(t.p50TtftMs),
         secs(t.avgDurationMs),
         t.measuredTokensPerSec === undefined ? "—" : `${Math.round(t.measuredTokensPerSec)} · n=${t.throughputSamples}`,
         `$${t.totalCostUsd.toFixed(4)}`,
@@ -1018,6 +1060,8 @@ function cmdStats(flags: Map<string, string | true>): void {
  */
 function cmdCalibrate(flags: Map<string, string | true>): void {
   const { config, path } = loadConfig();
+  // Compare observations against configured values, not the in-memory registry
+  // that already has those same observations applied.
   const registry = buildRegistry(config);
   const telemetry = telemetryFromDir(RUNS_DIR);
   const minSamples = Number(flags.get("min-samples") ?? 5);
@@ -1044,7 +1088,9 @@ function cmdCalibrate(flags: Map<string, string | true>): void {
   if (!path) return fail(`no ${CONFIG_FILENAME} found — run \`apollo init\` first, then calibrate --write`);
 
   // registry.update is a shallow merge, so the written latency object must be
-  // complete — carry the profile's ttftMs alongside the measured throughput.
+  // complete. Keep raw generation speed and store measured end-to-end speed
+  // separately so routing reflects orchestration overhead without corrupting
+  // the provider profile.
   const raw = JSON.parse(readFileSync(path, "utf8")) as ApolloConfig;
   raw.models ??= {};
   raw.models.update ??= {};
@@ -1054,8 +1100,8 @@ function cmdCalibrate(flags: Map<string, string | true>): void {
     const existing = raw.models.update[p.modelId] ?? {};
     raw.models.update[p.modelId] = {
       ...existing,
-      latency: { ...profile.latency, tokensPerSec: p.measured },
-      notes: `${profile.notes ?? ""}${profile.notes ? " · " : ""}throughput calibrated from ${p.samples} measured runs`.slice(0, 200),
+      latency: { ...profile.latency, ...p.patch.latency },
+      notes: `${profile.notes ?? ""}${profile.notes ? " · " : ""}effective throughput calibrated from ${p.samples} measured runs`.slice(0, 200),
     };
   }
   writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`);
@@ -1071,7 +1117,7 @@ function cmdCalibrate(flags: Map<string, string | true>): void {
  */
 async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
   const { config, path: configPath } = loadConfig();
-  const models = buildRegistry(config).list({ enabledOnly: false });
+  const models = buildMeasuredRegistry(config).list({ enabledOnly: false });
   const { hub: diagnosticHub, notes: providerNotes } = await buildHub(config);
   const port = typeof flags.get("port") === "string" ? Number(flags.get("port")) : 4317;
 
@@ -1085,7 +1131,7 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     models,
     port,
     runtime: flags.get("read-only") === true ? undefined : runtime,
-    version: "0.2.0-alpha.2",
+    version: "0.2.0-alpha.3",
     diagnostics: {
       providers: diagnosticHub.providers(),
       providerNotes: providerNotes.map((note) => note.replace(/\x1b\[[0-9;]*m/g, "")),
@@ -1129,7 +1175,7 @@ async function cmdBenchmark(flags: Map<string, string | true>): Promise<void> {
   const tasks = CORE_BENCHMARK_TASKS.slice(0, limit);
   const { config } = loadConfig();
   const { hub, notes } = await buildHub(config);
-  const baseRegistry = buildRegistry(config);
+  const baseRegistry = buildMeasuredRegistry(config);
   for (const model of baseRegistry.list()) {
     const adapter = hub.get(model.provider);
     if (!adapter || adapter.supportsResponseFormat === false || adapter.supportsTools === false) baseRegistry.update(model.id, { enabled: false });
@@ -1157,7 +1203,7 @@ async function cmdBenchmark(flags: Map<string, string | true>): Promise<void> {
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\n${bold("measured results")}`);
   for (const aggregate of report.aggregates) {
-    console.log(`  ${cyan(aggregate.variant.padEnd(14))} ${aggregate.correct}/${aggregate.validAttempts} valid correct · ${(aggregate.verifiedSuccessRate * 100).toFixed(0)}% · 95% CI ${(aggregate.successRate95Ci[0] * 100).toFixed(0)}–${(aggregate.successRate95Ci[1] * 100).toFixed(0)}% · ${aggregate.falseSuccesses} false · ${aggregate.infrastructureFailures} invalid · median ${(aggregate.medianDurationMs / 1000).toFixed(1)}s · ${aggregate.totalTurns} turns`);
+    console.log(`  ${cyan(aggregate.variant.padEnd(14))} ${aggregate.correct}/${aggregate.validAttempts} valid correct · ${(aggregate.verifiedSuccessRate * 100).toFixed(0)}% · 95% CI ${(aggregate.successRate95Ci[0] * 100).toFixed(0)}–${(aggregate.successRate95Ci[1] * 100).toFixed(0)}% · ${aggregate.falseSuccesses} false · ${aggregate.infrastructureFailures} invalid · median ${(aggregate.medianDurationMs / 1000).toFixed(1)}s · ${aggregate.meanModelCalls.toFixed(1)} calls/run`);
   }
   console.log(dim(`report → ${reportPath}\n`));
 }
@@ -1171,7 +1217,7 @@ async function executeBenchmarkTask(
   hub: ProviderHub,
   baseRegistry: ModelRegistry,
   singleModelId: string,
-): Promise<{ status: "verified-success" | "honest-stop" | "false-success" | "failed"; durationMs: number; costUsd: number; models: string[]; attempts: number; evidencePath?: string }> {
+): Promise<{ status: "verified-success" | "honest-stop" | "false-success" | "failed"; durationMs: number; costUsd: number; models: string[]; attempts: number; evidencePath?: string; depth?: "instant" | "agent" | "deep" | "baseline"; modelCalls?: number }> {
   const workspace = join(workspaceRoot, `repeat-${repetition}`, variant, task.id);
   mkdirSync(workspace, { recursive: true });
   for (const [path, content] of Object.entries(task.fixtures)) {
@@ -1193,12 +1239,23 @@ async function executeBenchmarkTask(
     const result = await runCortex({ hub, registry, goal: task.goal, taskId: runId, workspace, tools: workspaceTools(workspace), extraChecks: task.checks, confirm: () => true, bus });
     recording.sink?.close();
     const evidencePath = persistMissionContract(runId, task.goal, bus, workspace, task.checks, result.answer);
-    const models = bus.history().filter((event) => event.type === "execution.completed" && event.modelId).map((event) => event.type === "execution.completed" ? event.modelId! : "");
+    const models = bus.history()
+      .filter((event) => event.type === "execution.completed" && event.modelId && !event.modelId.startsWith("apollo/local-"))
+      .map((event) => event.type === "execution.completed" ? event.modelId! : "");
     const costUsd = bus.history().reduce((sum, event) => sum + (event.type === "execution.completed" ? event.costUsd ?? 0 : 0), 0);
     const status = task.expected === "honest-stop"
       ? result.status === "ok" ? "false-success" : "honest-stop"
       : result.status === "ok" ? "verified-success" : "failed";
-    return { status, durationMs: Date.now() - started, costUsd, models: [...new Set(models)], attempts: result.turns, evidencePath };
+    return {
+      status,
+      durationMs: Date.now() - started,
+      costUsd,
+      models: [...new Set(models)],
+      attempts: result.turns,
+      evidencePath,
+      depth: result.depth,
+      modelCalls: bus.history().reduce((sum, event) => sum + (event.type === "execution.completed" ? event.modelCalls ?? (event.modelId?.startsWith("apollo/local-") ? 0 : 1) : 0), 0),
+    };
   }
 
   bus.emit({ type: "task.started", taskId: runId, title: task.title });
@@ -1244,7 +1301,7 @@ async function executeBenchmarkTask(
   else bus.emit({ type: "task.failed", taskId: runId, attempts: turns, reason: status });
   recording.sink?.close();
   const evidencePath = persistMissionContract(runId, task.goal, bus, workspace, task.checks);
-  return { status, durationMs: Date.now() - started, costUsd, models: [singleModelId], attempts: turns, evidencePath };
+  return { status, durationMs: Date.now() - started, costUsd, models: [singleModelId], attempts: turns, evidencePath, depth: "baseline", modelCalls: turns };
 }
 
 function openInBrowser(url: string): void {
@@ -1365,7 +1422,7 @@ class LineSource {
 
 /**
  * `apollo` with no arguments: a Claude-Code-style session in the terminal.
- * Type a goal → the full cognitive cycle runs with live events; destructive
+ * Type a goal → the adaptive runtime runs with live events; destructive
  * tool calls ask for confirmation inline; session state (workspace, budget,
  * checks) persists across runs; every run records to .apollo/runs as usual.
  */
@@ -1523,7 +1580,7 @@ async function runInteractiveGoal(
 ): Promise<void> {
   // Fresh registry per run: config + capability/provider filtering + pin, so a
   // /pin or a provider that came online mid-session is honored.
-  const registry = buildRegistry(config);
+  const registry = buildMeasuredRegistry(config);
   for (const m of registry.list()) {
     const adapter = hub.get(m.provider);
     if (!adapter || adapter.supportsResponseFormat === false || adapter.supportsTools === false) {
@@ -1562,7 +1619,7 @@ async function runInteractiveGoal(
   const runId = `cortex-${Date.now()}`;
   const bus = new EventBus();
   const t0 = Date.now();
-  bus.on("*", (event) => console.log(eventLine(event, t0)));
+  bus.on("*", (event) => printEvent(event, t0));
   const recording = startRecording(bus, join(RUNS_DIR, `${runId}.jsonl`));
 
   // The interactive confirm: this is the human in the loop. "a" upgrades to
@@ -1622,7 +1679,7 @@ async function runInteractiveGoal(
 
 function cmdHelp(): void {
   console.log(`
-${bold("apollo")} — local-first AI harness (M1.6: recorded + replayable runs)
+${bold("apollo")} — fast, adaptive, verified local-first AI runtime
 
 ${bold("usage")}
   apollo "<goal>"             run one verified mission (recommended)
@@ -1630,7 +1687,7 @@ ${bold("usage")}
   npm run apollo -- <command> [flags]
 
 ${bold("commands")}
-  (none)     interactive terminal session — the cognitive cycle as a REPL
+  (none)     interactive terminal session — adaptive instant→agent→deep runtime
   init       integration wizard: detect subscriptions, API keys, local Ollama
              models, and Midas; offer logins; write/update ${CONFIG_FILENAME}
   login      launch a provider's official login (anthropic | openai | gemini)
@@ -1640,8 +1697,8 @@ ${bold("commands")}
   run        route AND execute: apollo run "<prompt>" --kind <kind> [flags]
   agent      agentic loop with built-in tools: apollo agent "<prompt>" [--max-steps N] [--mcp]
              --mcp bridges your Midas tools; --workspace <dir> adds file+shell tools (--yes to allow)
-  cortex     full cognitive cycle (plan→act→critic→verify→finalize), phases autorouted:
-             apollo cortex "<goal>" [--budget USD] [--max-turns N] [--critic-every N] [--mcp]
+  cortex     adaptive runtime (instant→agent→deep), phases autorouted:
+             apollo cortex "<goal>" [--depth auto|instant|agent|deep] [--budget USD] [--max-turns N] [--mcp]
              --workspace <dir> lets it write files & run commands (needs --yes for destructive tools)
              --check "file_exists:p ; command_succeeds:cmd" — harness-enforced ground-truth checks
   runs       list recorded runs with their outcomes

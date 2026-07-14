@@ -6,6 +6,7 @@
 export type ApolloEvent =
   | { type: "task.started"; taskId: string; title: string }
   | { type: "task.planned"; taskId: string; summary: string }
+  | { type: "depth.selected"; taskId: string; depth: "instant" | "agent" | "deep"; reason: string }
   | { type: "routing.decided"; taskId: string; modelId: string; reason: string; kind?: string }
   | { type: "execution.started"; taskId: string; attempt: number }
   | {
@@ -16,6 +17,10 @@ export type ApolloEvent =
       costUsd?: number;
       inputTokens?: number;
       outputTokens?: number;
+      durationMs?: number;
+      ttftMs?: number;
+      /** Actual provider completions inside this execution (agent loops may use more than one). */
+      modelCalls?: number;
     }
   | { type: "execution.failed"; taskId: string; attempt: number; error: string }
   | { type: "verification.passed"; taskId: string; attempt: number }
@@ -30,7 +35,8 @@ export type ApolloEvent =
   | { type: "belief.recorded"; taskId: string; key: string; value: string }
   | { type: "critic.reviewed"; taskId: string; stepId: string; verdict: "pass" | "fail"; forceReplan: boolean; note: string }
   | { type: "permission.decided"; taskId: string; tool: string; risk: string; decision: "allow" | "deny"; reason: string }
-  | { type: "meta.stop"; taskId: string; reason: string; status: string };
+  | { type: "meta.stop"; taskId: string; reason: string; status: string }
+  | { type: "output.delta"; taskId: string; text: string };
 
 export type StampedEvent = ApolloEvent & { at: number; seq: number };
 

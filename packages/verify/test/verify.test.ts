@@ -45,7 +45,7 @@ describe("runCommand / runVerifiers", () => {
     const ok = await runCommand('node -e "process.exit(0)"', { cwd: process.cwd() });
     expect(ok.ok).toBe(true);
 
-    const bad = await runCommand('node -e "console.error(\'boom detail\'); process.exit(3)"', {
+    const bad = await runCommand("printf 'boom detail\\n' >&2; exit 3", {
       cwd: process.cwd(),
     });
     expect(bad.ok).toBe(false);

@@ -7,6 +7,8 @@ export interface StructuredResult<T> {
   raw: string;
   costUsd: number;
   usage?: TokenUsage;
+  durationMs: number;
+  ttftMs: number;
 }
 
 export interface RunStructuredOptions {
@@ -38,5 +40,12 @@ export async function runStructured<T = unknown>(options: RunStructuredOptions):
   } catch {
     throw new Error(`structured output was not valid JSON: ${completion.text.slice(0, 200)}`);
   }
-  return { value, raw: completion.text, costUsd: completion.costUsd ?? 0, usage: completion.usage };
+  return {
+    value,
+    raw: completion.text,
+    costUsd: completion.costUsd ?? 0,
+    usage: completion.usage,
+    durationMs: Math.round(completion.seconds * 1000),
+    ttftMs: completion.ttftMs,
+  };
 }

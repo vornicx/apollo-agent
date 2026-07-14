@@ -35,6 +35,8 @@ export interface ModelLatency {
   ttftMs: number;
   /** Typical sustained output throughput. */
   tokensPerSec: number;
+  /** Measured output tokens / full request wall time. Runtime-only calibration. */
+  effectiveTokensPerSec?: number;
 }
 
 /**

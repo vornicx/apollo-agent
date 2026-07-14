@@ -107,7 +107,10 @@ export class CodexAdapter implements ProviderAdapter {
         input,
         tools,
         tool_choice: toolChoice,
-        parallel_tool_calls: false,
+        // The agent registry executes independent calls concurrently and keeps
+        // result order stable. Let Codex expose that parallelism instead of
+        // forcing one network round trip per read/search tool.
+        parallel_tool_calls: true,
         store: false,
         stream: true,
         include: [],

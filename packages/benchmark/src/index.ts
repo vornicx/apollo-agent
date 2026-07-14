@@ -25,10 +25,12 @@ export interface BenchmarkAttempt {
   repetition: number;
   evidencePath?: string;
   error?: string;
+  depth?: "instant" | "agent" | "deep" | "baseline";
+  modelCalls?: number;
 }
 
 export interface BenchmarkReport {
-  schemaVersion: 3;
+  schemaVersion: 4;
   generatedAt: string;
   environment: { node: string; platform: string; arch: string; label?: string };
   attempts: BenchmarkAttempt[];
@@ -49,6 +51,8 @@ export interface BenchmarkReport {
     durationStdDevMs: number;
     successRate95Ci: [number, number];
     totalTurns: number;
+    totalModelCalls: number;
+    meanModelCalls: number;
   }>;
 }
 
@@ -97,7 +101,7 @@ export async function runBenchmark(
   const workerCount = Math.max(1, Math.min(jobs.length || 1, Math.floor(concurrency)));
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt: new Date().toISOString(),
     environment: { node: process.version, platform: process.platform, arch: process.arch, label },
     attempts,
@@ -139,6 +143,10 @@ function aggregateVariant(attempts: BenchmarkAttempt[], variant: BenchmarkVarian
     durationStdDevMs,
     successRate95Ci: [Math.max(0, center - margin), Math.min(1, center + margin)],
     totalTurns: validAttempts.reduce((sum, attempt) => sum + attempt.attempts, 0),
+    totalModelCalls: validAttempts.reduce((sum, attempt) => sum + (attempt.modelCalls ?? attempt.attempts), 0),
+    meanModelCalls: validAttempts.length
+      ? validAttempts.reduce((sum, attempt) => sum + (attempt.modelCalls ?? attempt.attempts), 0) / validAttempts.length
+      : 0,
   };
 }
 

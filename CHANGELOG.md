@@ -2,6 +2,24 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.3 — 2026-07-14
+
+### Added
+
+- Adaptive `instant`, `agent`, and `deep` execution lanes with deterministic auto-selection and a `--depth` override.
+- Live answer deltas in Desktop, execution TTFT/wall-time telemetry, and benchmark model-call/depth accounting.
+
+### Changed
+
+- Exact greetings complete locally with zero provider calls; ordinary work uses a single tool loop with deterministic post-execution verification; the full plan/critic/verifier cycle is reserved for complex and high-risk work.
+- Independent read tools execute concurrently while writes and shell actions retain deterministic model order.
+- Routing learns effective end-to-end throughput and p50 TTFT from local run telemetry without overwriting raw provider speed.
+- Completion token budgets and task estimates now reflect the selected lane and actual prompt size.
+
+### Fixed
+
+- Verification shell output capture is stable for very short failing processes.
+
 ## 0.2.0-alpha.2 — 2026-07-14
 
 ### Fixed

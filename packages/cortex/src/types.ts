@@ -54,6 +54,7 @@ export interface CortexResult {
   costUsd: number;
   turns: number;
   replans: number;
+  depth: "instant" | "agent" | "deep";
 }
 
 export interface CortexLimits {
@@ -63,7 +64,7 @@ export interface CortexLimits {
   maxTurns: number;
   /** Replans before an honest stop. Default 5. */
   maxReplans: number;
-  /** Critic audits every N steps (failures are always audited). Default 1. */
+  /** Deep-lane critic cadence (agent/instant lanes skip it). Default 1. */
   criticEvery: number;
 }
 

@@ -83,6 +83,36 @@ describe("runAgent", () => {
     expect(result.stoppedReason).toBe("max-steps");
     expect(result.steps).toHaveLength(3);
   });
+
+  it("runs read-only calls concurrently but serializes batches with side effects", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const read = async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      active -= 1;
+      return "read";
+    };
+    const readHub = scriptedHub([
+      { text: "", toolCalls: [{ id: "r1", name: "read", arguments: {} }, { id: "r2", name: "read", arguments: {} }] },
+      { text: "done" },
+    ]).hub;
+    const reads = new ToolRegistry().define("read", "read", { type: "object" }, read);
+    await runAgent({ hub: readHub, model, messages: [{ role: "user", content: "read" }], tools: reads });
+    expect(maxActive).toBe(2);
+
+    const order: string[] = [];
+    const mixedHub = scriptedHub([
+      { text: "", toolCalls: [{ id: "w", name: "write", arguments: {} }, { id: "r", name: "read", arguments: {} }] },
+      { text: "done" },
+    ]).hub;
+    const mixed = new ToolRegistry()
+      .define("write", "write", { type: "object" }, async () => { order.push("write"); return "wrote"; }, true)
+      .define("read", "read", { type: "object" }, async () => { order.push("read"); return "read"; });
+    await runAgent({ hub: mixedHub, model, messages: [{ role: "user", content: "change" }], tools: mixed });
+    expect(order).toEqual(["write", "read"]);
+  });
 });
 
 describe("runStructured", () => {

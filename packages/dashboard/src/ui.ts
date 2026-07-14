@@ -15,7 +15,7 @@ export function renderHtml(): string {
 const CLIENT_SCRIPT = `
 'use strict';
 var CAPS = [['code','code'],['reasoning','rsn'],['writing','wrt'],['vision','vis'],['tool-use','tool'],['long-context','ctx']];
-var state = { runs: [], models: [], missions: [], selected: null, diffIds: [], searchQ: '' };
+var state = { runs: [], models: [], missions: [], selected: null, diffIds: [], searchQ: '', liveAnswers: {} };
 var liveTimer = null;
 
 function el(id){ return document.getElementById(id); }
@@ -60,14 +60,15 @@ function renderMissions(data){
   var enabled = Boolean(data && data.enabled);
   el('mission-disabled').style.display = enabled ? 'none' : 'block';
   var rows = state.missions.map(function(m){
+    var liveAnswer = m.answer || state.liveAnswers[m.id] || '';
     var actions = m.status === 'running'
       ? '<button class="danger" data-action="cancel" data-id="'+esc(m.id)+'">Cancel</button>'
       : '<button data-action="retry" data-id="'+esc(m.id)+'">Retry</button>';
     if(m.status === 'stopped' || m.status === 'needs_input') actions += '<button class="gold-btn" data-action="clarify" data-id="'+esc(m.id)+'">Answer & retry</button>';
     return '<div class="mission-row"><span class="sdot '+(m.status==='succeeded'?'succeeded':(m.status==='running'||m.status==='needs_input')?'incomplete':'failed')+'"></span>'+
       '<div class="mission-main"><div class="mission-goal">'+esc(m.goal).slice(0,240)+'</div>'+
-      (m.answer ? '<div class="mission-answer">'+esc(m.answer).slice(0,1200)+'</div>' : '')+
-      '<div class="mission-meta mono">'+esc(m.id)+' · '+esc(m.workspace)+' · '+esc(m.status)+(m.verificationPassed===true?' · verified':'')+'</div></div>'+
+      '<div class="mission-answer" id="mission-answer-'+esc(m.id)+'"'+(liveAnswer?'':' style="display:none"')+'>'+esc(liveAnswer).slice(0,1200)+'</div>'+
+      '<div class="mission-meta mono">'+esc(m.id)+' · '+esc(m.workspace)+' · '+esc(m.depth||'auto')+' · '+esc(m.status)+(m.verificationPassed===true?' · verified':'')+'</div></div>'+
       '<div class="mission-actions">'+actions+'</div></div>';
   }).join('');
   el('mission-list').innerHTML = rows || '<div class="empty">No missions yet. Describe an outcome above.</div>';
@@ -83,7 +84,8 @@ function submitMission(e){
     workspace: el('mission-workspace').value,
     approve: el('mission-approve').checked,
     noMemory: !el('mission-memory').checked,
-    check: el('mission-check').value
+    check: el('mission-check').value,
+    depth: el('mission-depth').value
   }).then(function(){
     el('mission-goal').value = '';
     return loadMissionControl();
@@ -325,7 +327,7 @@ function renderFleet(models){
       '<div class="kv"><span class="k">'+esc(m.displayName || '')+'</span></div>' +
       '<div class="kv"><span class="k">price</span><span class="val">'+priceText(m, tag)+'</span></div>' +
       '<div class="kv"><span class="k">context</span><span class="val">'+(m.contextWindow/1000).toLocaleString()+'K · out '+(m.maxOutputTokens/1000)+'K</span></div>' +
-      '<div class="kv"><span class="k">throughput</span><span class="val">'+m.latency.tokensPerSec+' tok/s</span></div>' +
+      '<div class="kv"><span class="k">throughput</span><span class="val">'+(m.latency.effectiveTokensPerSec || m.latency.tokensPerSec)+' tok/s'+(m.latency.effectiveTokensPerSec ? ' effective' : ' seed')+'</span></div>' +
       '<div class="caps">'+caps+'</div>' +
       '<div class="src">'+esc(sourceText(m))+'</div>' +
       '</div>';
@@ -364,12 +366,13 @@ function evMeta(ev){
   if(t === 'task.planned') return { cls:'', k:'task.planned', d: esc(ev.summary) };
   if(t === 'routing.decided') return { cls:'blue', k:'routing.decided', model: ev.modelId, reason: ev.reason };
   if(t === 'execution.started') return { cls:'', k:'execution.started', d:'attempt ' + ev.attempt };
-  if(t === 'execution.completed') return { cls:'', k:'execution.completed', d:'attempt ' + ev.attempt + (ev.modelId ? ' · ' + ev.modelId : '') + (ev.costUsd != null ? ' · ' + money(ev.costUsd) : '') };
+  if(t === 'execution.completed') return { cls:'', k:'execution.completed', d:'attempt ' + ev.attempt + (ev.modelId ? ' · ' + ev.modelId : '') + (ev.modelCalls != null ? ' · ' + ev.modelCalls + ' call(s)' : '') + (ev.costUsd != null ? ' · ' + money(ev.costUsd) : '') };
   if(t === 'execution.failed') return { cls:'red', k:'execution.failed', d:'attempt ' + ev.attempt + ': ' + esc(ev.error) };
   if(t === 'verification.passed') return { cls:'green', k:'verification.passed', d:'attempt ' + ev.attempt };
   if(t === 'verification.failed') return { cls:'red', k:'verification.failed', d:'attempt ' + ev.attempt + ': ' + esc((ev.issues||[]).join('; ')) };
   if(t === 'task.completed') return { cls:'green', k:'task.completed', d:'in ' + ev.attempts + ' attempt(s)' };
   if(t === 'task.failed') return { cls:'red', k:'task.failed', d: esc(ev.reason) };
+  if(t === 'depth.selected') return { cls:'gold', k:'depth.' + esc(ev.depth), d: esc(ev.reason) };
   if(t === 'plan.produced') return { cls:'gold', k:'plan.produced', d: ev.steps + ' step(s) · confidence ' + Number(ev.confidence).toFixed(2) + (ev.replan ? ' (replan)' : '') };
   if(t === 'step.started') return { cls:'blue', k:'step.started ' + ev.stepId, d: esc(ev.description) };
   if(t === 'step.finished') return { cls: ev.status === 'done' ? 'green' : 'red', k:'step.finished ' + ev.stepId, d: ev.status + (ev.note ? ' — ' + esc(ev.note) : '') };
@@ -419,7 +422,7 @@ function openRun(id){
     if(s.models && s.models.length > 1) chips.push('<span class="chip">path: ' + esc(s.models.join(' -> ')) + '</span>');
     el('dmeta').innerHTML = chips.join('');
     var t0 = data.events.length ? data.events[0].at : 0;
-    el('timeline').innerHTML = missionEvidence(data.mission) + data.events.map(function(ev){ return evNode(ev, t0); }).join('');
+    el('timeline').innerHTML = missionEvidence(data.mission) + data.events.filter(function(ev){ return ev.type !== 'output.delta'; }).map(function(ev){ return evNode(ev, t0); }).join('');
     el('drawer').classList.add('open');
   });
 }
@@ -443,6 +446,7 @@ function reloadSoon(){
     reloadPending = false;
     api('/api/runs').then(function(data){ renderRuns(data && data.runs ? data.runs : data); });
     api('/api/stats').then(renderStats);
+    loadMissionControl();
     if(state.selected) refreshDetail(state.selected);
   }, 400);
 }
@@ -450,7 +454,7 @@ function refreshDetail(id){
   api('/api/runs/' + encodeURIComponent(id)).then(function(data){
     if(data.error) return;
     var t0 = data.events.length ? data.events[0].at : 0;
-    el('timeline').innerHTML = data.events.map(function(ev){ return evNode(ev, t0); }).join('');
+    el('timeline').innerHTML = data.events.filter(function(ev){ return ev.type !== 'output.delta'; }).map(function(ev){ return evNode(ev, t0); }).join('');
   });
 }
 function connectStream(){
@@ -459,6 +463,12 @@ function connectStream(){
   es.addEventListener('run-event', function(e){
     setLive(true);
     var payload = JSON.parse(e.data);
+    if(payload.event && payload.event.type === 'output.delta'){
+      state.liveAnswers[payload.runId] = (state.liveAnswers[payload.runId] || '') + (payload.event.text || '');
+      var answer = el('mission-answer-' + payload.runId);
+      if(answer){ answer.style.display='block'; answer.textContent=state.liveAnswers[payload.runId].slice(0,1200); }
+      return;
+    }
     if(state.selected && payload.runId === state.selected){
       var t0 = state.selectedEvents && state.selectedEvents.length ? state.selectedEvents[0].at : payload.event.at;
       if(state.selectedEvents) state.selectedEvents.push(payload.event);
@@ -620,9 +630,9 @@ tbody tr.active { background: var(--gold-soft); }
 .mission-grid { display:grid; grid-template-columns:minmax(320px, 0.9fr) minmax(420px, 1.4fr); gap:14px; }
 .mission-form { padding:18px; display:flex; flex-direction:column; gap:12px; }
 .mission-form label { color:var(--dim); font-size:12px; display:flex; flex-direction:column; gap:6px; }
-.mission-form textarea,.mission-form input[type="text"] { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:10px 11px; font:12.5px var(--mono); outline:none; }
+.mission-form textarea,.mission-form input[type="text"],.mission-form select { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:10px 11px; font:12.5px var(--mono); outline:none; }
 .mission-form textarea { min-height:132px; resize:vertical; font-family:var(--sans); font-size:14px; }
-.mission-form textarea:focus,.mission-form input:focus { border-color:rgba(242,179,54,.5); }
+.mission-form textarea:focus,.mission-form input:focus,.mission-form select:focus { border-color:rgba(242,179,54,.5); }
 .mission-checks { display:flex; gap:16px; flex-wrap:wrap; }
 .mission-checks label { flex-direction:row; align-items:center; gap:7px; }
 button { background:var(--elev); color:var(--text); border:1px solid var(--border-strong); border-radius:7px; padding:7px 12px; cursor:pointer; }
@@ -834,6 +844,7 @@ button.danger { color:var(--red); }
         <div class="label">New verified mission</div>
         <label>Goal<textarea id="mission-goal" required maxlength="20000" placeholder="Fix the failing tests and prove they pass"></textarea></label>
         <label>Workspace<input id="mission-workspace" type="text" required value="." placeholder="/path/to/project" /></label>
+        <label>Depth<select id="mission-depth"><option value="auto">Auto · fastest safe path</option><option value="instant">Instant · one response</option><option value="agent">Agent · one tool loop</option><option value="deep">Deep · plan, critic, verify</option></select></label>
         <label>Deterministic checks<input id="mission-check" type="text" placeholder="command_succeeds:npm test" /></label>
         <div class="mission-checks">
           <label><input id="mission-approve" type="checkbox" /> Approve policy prompts</label>

@@ -52,6 +52,9 @@ export function estimateCostUsd(model: ModelProfile, task: ResolvedTaskSpec): nu
 }
 
 export function estimateSeconds(model: ModelProfile, task: ResolvedTaskSpec): number {
+  if (model.latency.effectiveTokensPerSec && model.latency.effectiveTokensPerSec > 0) {
+    return task.expectedOutputTokens / model.latency.effectiveTokensPerSec;
+  }
   return model.latency.ttftMs / 1000 + task.expectedOutputTokens / model.latency.tokensPerSec;
 }
 

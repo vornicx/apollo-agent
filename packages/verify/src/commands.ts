@@ -24,7 +24,10 @@ export function runCommand(command: string, options: RunCommandOptions): Promise
   const timeoutMs = options.timeoutMs ?? 120_000;
   const tailChars = options.tailChars ?? 4_000;
   return new Promise((resolvePromise) => {
-    const child = spawn(command, { shell: true, cwd: options.cwd });
+    // An explicit shell process keeps stdout/stderr pipes reliable across Node
+    // versions (Node 22 can close the implicit `shell: true` wrapper before a
+    // very short child's final stderr chunk is observed).
+    const child = spawn("/bin/sh", ["-c", command], { cwd: options.cwd });
     let output = "";
     let timedOut = false;
     const append = (chunk: Buffer) => {

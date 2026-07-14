@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-memory",
-  "version": "0.2.0-alpha.2",
+  "version": "0.2.0-alpha.3",
   "private": true,
   "description": "Apollo memory port — mirrors the Midas surface (remember/recall/build_context/forget) with an MCP adapter and an in-memory implementation.",
   "type": "module",

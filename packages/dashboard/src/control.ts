@@ -17,6 +17,7 @@ export interface MissionLaunchRequest {
   noMemory?: boolean;
   check?: string;
   parentId?: string;
+  depth?: "auto" | "instant" | "agent" | "deep";
 }
 
 export interface ControlledMission extends MissionLaunchRequest {
@@ -59,6 +60,7 @@ export class MissionController {
     if (!goal || goal.length > 20_000) throw new Error("goal is required and must be at most 20,000 characters");
     if (!input.workspace || !existsSync(workspace)) throw new Error("workspace must be an existing path");
     if (input.parentId && !VALID_ID.test(input.parentId)) throw new Error("invalid parent mission id");
+    if (input.depth && !["auto", "instant", "agent", "deep"].includes(input.depth)) throw new Error("invalid mission depth");
 
     const id = `mission-${Date.now()}-${randomBytes(3).toString("hex")}`;
     const now = new Date().toISOString();
@@ -70,6 +72,7 @@ export class MissionController {
       noMemory: Boolean(input.noMemory),
       check: input.check?.trim() || undefined,
       parentId: input.parentId,
+      depth: input.depth ?? "auto",
       status: "running",
       createdAt: now,
       updatedAt: now,
@@ -88,6 +91,7 @@ export class MissionController {
     if (record.approve) args.push("--yes");
     if (record.noMemory) args.push("--no-memory");
     if (record.check) args.push("--check", record.check);
+    if (record.depth) args.push("--depth", record.depth);
 
     let child: ChildProcess;
     try {
@@ -160,6 +164,7 @@ export class MissionController {
       noMemory: previous.noMemory,
       check: previous.check,
       parentId: id,
+      depth: previous.depth,
     });
   }
 

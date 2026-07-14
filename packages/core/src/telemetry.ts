@@ -18,9 +18,11 @@ export interface TelemetrySample {
   kind: string;
   /** Wall time of the attempt (execution.started → execution.completed), when both were recorded. */
   durationMs?: number;
+  ttftMs?: number;
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
+  modelCalls?: number;
   /** Verification verdict for this attempt: true/false when recorded, undefined when the run never verified it. */
   verified?: boolean;
 }
@@ -43,10 +45,16 @@ export interface ModelTelemetry {
   totalCostUsd: number;
   /** Mean attempt wall time over samples that have one. */
   avgDurationMs?: number;
-  /** Median measured output throughput over samples with tokens + duration. */
+  /** Mean and median measured time-to-first-token. */
+  avgTtftMs?: number;
+  p50TtftMs?: number;
+  /** Median effective output throughput (output tokens / full wall time). */
   measuredTokensPerSec?: number;
   /** How many samples carried tokens + duration and back the throughput figure. */
   throughputSamples: number;
+  /** Provider completions contained in the sampled executions. */
+  totalModelCalls?: number;
+  avgModelCalls?: number;
   byKind: KindTelemetry[];
 }
 
@@ -73,10 +81,12 @@ export function collectSamples(events: readonly StampedEvent[], runId?: string):
         runId,
         modelId: event.modelId,
         kind: lastKind,
-        durationMs: t0 !== undefined && event.at >= t0 ? event.at - t0 : undefined,
+        durationMs: event.durationMs ?? (t0 !== undefined && event.at >= t0 ? event.at - t0 : undefined),
+        ttftMs: event.ttftMs,
         costUsd: event.costUsd,
         inputTokens: event.inputTokens,
         outputTokens: event.outputTokens,
+        modelCalls: event.modelCalls,
       };
       samples.push(sample);
       byAttempt.set(event.attempt, sample);
@@ -109,6 +119,7 @@ export function aggregateTelemetry(samples: TelemetrySample[]): ModelTelemetry[]
     const verified = list.filter((s) => s.verified === true).length;
     const failed = list.filter((s) => s.verified === false).length;
     const durations = list.map((s) => s.durationMs).filter((d): d is number => d !== undefined && d > 0);
+    const ttfts = list.map((s) => s.ttftMs).filter((d): d is number => d !== undefined && d >= 0);
     const throughputs = list
       .filter((s) => s.outputTokens !== undefined && s.durationMs !== undefined && s.durationMs > 0)
       .map((s) => (s.outputTokens! / s.durationMs!) * 1000);
@@ -141,8 +152,12 @@ export function aggregateTelemetry(samples: TelemetrySample[]): ModelTelemetry[]
       verifyRate: verified + failed > 0 ? verified / (verified + failed) : undefined,
       totalCostUsd: list.reduce((sum, s) => sum + (s.costUsd ?? 0), 0),
       avgDurationMs: durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : undefined,
+      avgTtftMs: ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : undefined,
+      p50TtftMs: median(ttfts),
       measuredTokensPerSec: median(throughputs),
       throughputSamples: throughputs.length,
+      totalModelCalls: list.reduce((sum, sample) => sum + (sample.modelCalls ?? 1), 0),
+      avgModelCalls: list.length ? list.reduce((sum, sample) => sum + (sample.modelCalls ?? 1), 0) / list.length : undefined,
       byKind,
     });
   }
@@ -167,17 +182,17 @@ export function telemetryFromDir(dir: string): ModelTelemetry[] {
 /** The slice of a model profile calibration reads — structural, so core stays router-free. */
 export interface CalibratableProfile {
   id: string;
-  latency: { tokensPerSec: number };
+  latency: { tokensPerSec: number; effectiveTokensPerSec?: number };
 }
 
 export interface CalibrationProposal {
   modelId: string;
-  field: "latency.tokensPerSec";
+  field: "latency.effectiveTokensPerSec";
   current: number;
   measured: number;
   samples: number;
   /** Ready to merge into apollo.config.json `models.update[modelId]`. */
-  patch: { latency: { tokensPerSec: number } };
+  patch: { latency: { effectiveTokensPerSec: number } };
 }
 
 export interface CalibrationOptions {
@@ -207,16 +222,16 @@ export function proposeCalibration(
     const profile = byId.get(t.modelId);
     if (!profile || t.measuredTokensPerSec === undefined) continue;
     if (t.throughputSamples < minSamples) continue;
-    const current = profile.latency.tokensPerSec;
+    const current = profile.latency.effectiveTokensPerSec ?? profile.latency.tokensPerSec;
     const measured = Math.round(t.measuredTokensPerSec);
     if (current > 0 && Math.abs(measured - current) / current < minDeviation) continue;
     proposals.push({
       modelId: t.modelId,
-      field: "latency.tokensPerSec",
+      field: "latency.effectiveTokensPerSec",
       current,
       measured,
-      samples: t.samples,
-      patch: { latency: { tokensPerSec: measured } },
+      samples: t.throughputSamples,
+      patch: { latency: { effectiveTokensPerSec: measured } },
     });
   }
   return proposals;

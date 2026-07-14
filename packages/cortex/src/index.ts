@@ -10,6 +10,8 @@ export { parseProtocol, PROTOCOL_INSTRUCTIONS } from "./protocol";
 export type { ParsedProtocol } from "./protocol";
 export { runCortex } from "./cortex";
 export type { RunCortexOptions } from "./cortex";
+export { inferTaskKind, localInstantReply, selectDepth } from "./depth";
+export type { CortexDepth, DepthDecision, ResolvedCortexDepth } from "./depth";
 export { verifyCriteria } from "./verifier";
 export {
   DEFAULT_LIMITS,
