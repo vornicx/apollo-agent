@@ -98,7 +98,10 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
   let feedback = "";
   if (plan.needsInput) return honestStop(`human input required: ${plan.needsInput}`, "needs_input", plan);
 
-  // Trivial fast path: a direct answer, checked by one critic.
+  // Trivial fast path: producing the conversational answer is the outcome.
+  // The normal critic requires tool evidence, which is appropriate for actions
+  // but would reject a greeting or other direct response and force a useless
+  // replan loop.
   if (plan.trivial && (options.extraChecks ?? []).length === 0) {
     const answer = await ctx.complete("conversation", "standard", [
       { role: "user", content: `${options.goal}${langNote}` },
@@ -111,15 +114,9 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       status: "done",
       note: answer.slice(0, 200),
     };
-    const verdict = await critique(ctx, pseudo, answer.slice(0, 2000));
-    if (verdict.verdict === "pass") {
-      plan.steps = [pseudo];
-      bus.emit({ type: "verification.passed", taskId, attempt: ctx.lastActAttempt || meta.turns });
-      return finish("ok", answer, plan);
-    }
-    feedback = verdict.feedback || "direct answer rejected";
-    plan = await makePlan(ctx, options.goal, feedback, options.context);
-    replans += 1;
+    plan.steps = [pseudo];
+    bus.emit({ type: "verification.passed", taskId, attempt: ctx.lastActAttempt || meta.turns });
+    return finish("ok", answer, plan);
   }
 
   // ---- outer loop ----

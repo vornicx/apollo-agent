@@ -98,6 +98,7 @@ describe("runCortex", () => {
     expect(result.plan?.steps).toHaveLength(1);
     expect(result.plan?.steps[0].id).toBe("s0");
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "verification.passed" }));
+    expect(bus.history().some((event) => event.type === "critic.reviewed")).toBe(false);
   });
 
   it("replans when verification fails, then finalizes", async () => {

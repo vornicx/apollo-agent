@@ -2,6 +2,12 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.2 — 2026-07-14
+
+### Fixed
+
+- Direct conversational missions no longer enter a critic/replan loop while waiting for tool evidence that cannot exist for a reply.
+
 ## 0.2.0-alpha.1 — 2026-07-14
 
 ### Changed
