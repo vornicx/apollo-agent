@@ -8,7 +8,7 @@
     "url": "git+https://github.com/vornicx/apollo-agent.git"
   },
   "bugs": "https://github.com/vornicx/apollo-agent/issues",
-  "homepage": "https://github.com/vornicx/apollo-agent/tree/runtime-rebuild-0.2-alpha",
+  "homepage": "https://github.com/vornicx/apollo-agent",
   "type": "module",
   "bin": {
     "apollo": "bin/apollo.js"
