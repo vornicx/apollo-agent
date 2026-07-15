@@ -1,6 +1,6 @@
 {
   "name": "apollo",
-  "version": "0.2.0-alpha.6",
+  "version": "0.2.0-alpha.7",
   "private": true,
   "description": "Apollo — a local-first AI harness with an explainable autorouter, verified pipelines, and Midas memory. Part of Archic.",
   "repository": {

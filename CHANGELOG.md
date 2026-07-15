@@ -2,6 +2,12 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.7 — 2026-07-15
+
+### Fixed
+
+- One-shot workspace mutations now route at the hard task-quality floor. This prevents a cheap weak local model from winning on speed/cost, producing malformed output, and forcing a slower failed fallback; one capable call is preferred instead.
+
 ## 0.2.0-alpha.6 — 2026-07-15
 
 ### Fixed

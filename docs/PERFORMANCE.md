@@ -40,6 +40,9 @@ Measured on 2026-07-15 in this checkout:
 Alpha.6 adds the natural-goal verifier gate discovered by the installed Desktop smoke: the exact
 goal `Fix add.js so node --test passes.` now infers and runs that baseline without an explicit
 Dashboard check field, completes in one verified call, and measured 2.2 s in the release checkout.
+Alpha.7 repeats the same gate with Desktop's accumulated routing telemetry: the hard one-shot quality
+floor selects the capable Codex model instead of a faster 1B local model, reuses 3/3 cached files,
+and completes in one verified call in 2.1 s.
 
 The initial regression gate is structural: an exact greeting must select `instant`, perform zero
 provider calls, and still record one local execution; an ordinary task must select `agent` without planner/critic/verifier calls; forced

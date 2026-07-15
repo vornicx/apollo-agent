@@ -361,4 +361,39 @@ describe("runCortex", () => {
     expect(readFileSync(join(workspace, "large.js"), "utf8")).toContain("retained padding");
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "one_shot.decided", mode: "patch", eligible: true }));
   });
+
+  it("routes one-shot mutations at the hard quality floor", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-one-shot-quality-"));
+    writeFileSync(join(workspace, "value.js"), "export const value = 1;\n");
+    const strong = { ...model(), id: "test/strong", nativeId: "strong" };
+    const weak: ModelProfile = {
+      ...model(),
+      id: "test/weak",
+      nativeId: "weak",
+      capabilities: { ...model().capabilities, reasoning: 0.2, code: 0.2 },
+      latency: { ttftMs: 1, tokensPerSec: 10_000 },
+    };
+    let nativeModel = "";
+    const adapter: ProviderAdapter = {
+      provider: "test",
+      supportsTools: true,
+      supportsResponseFormat: true,
+      async complete(request) {
+        nativeModel = request.model;
+        return { text: "```file:value.js\nexport const value = 2;\n```", usage: { inputTokens: 100, outputTokens: 20 } };
+      },
+    };
+    const registry = new ModelRegistry().register(weak).register(strong);
+    const result = await runCortex({
+      hub: new ProviderHub().register(adapter),
+      registry,
+      goal: "Fix value.js so value is 2",
+      workspace,
+      tools: workspaceTools(workspace),
+      extraChecks: [{ type: "file_contains", path: "value.js", text: "value = 2" }],
+      confirm: () => true,
+    });
+    expect(result.status).toBe("ok");
+    expect(nativeModel).toBe("strong");
+  });
 });

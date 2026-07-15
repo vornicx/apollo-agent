@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-config",
-  "version": "0.2.0-alpha.6",
+  "version": "0.2.0-alpha.7",
   "private": true,
   "description": "apollo.config.json loader — user models, provider credentials (env-referenced), routing policy, and Midas wiring.",
   "type": "module",

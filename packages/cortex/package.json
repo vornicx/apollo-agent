@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-cortex",
-  "version": "0.2.0-alpha.6",
+  "version": "0.2.0-alpha.7",
   "private": true,
   "description": "Apollo adaptive runtime — instant, single-agent, or full plan → act → critic → verify → finalize depth over the routed provider hub and event stream.",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-desktop",
-  "version": "0.2.0-alpha.6",
+  "version": "0.2.0-alpha.7",
   "private": true,
   "description": "Thin native control shell for Apollo Runtime",
   "scripts": {

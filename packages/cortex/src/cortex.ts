@@ -226,7 +226,11 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       });
       bus.emit({ type: "one_shot.decided", taskId, ...oneShotAssessment! });
     }
-    const decision = ctx.route(depthDecision.kind, "standard", ["tool-use"], {
+    // A one-shot mutation has no cheap corrective turn before it touches the
+    // workspace. Route it at the hard quality floor: one capable call is both
+    // faster and safer than a weak call plus fallback. Conversational/tool-loop
+    // work keeps the standard cost/speed balance.
+    const decision = ctx.route(depthDecision.kind, oneShotContext ? "hard" : "standard", ["tool-use"], {
       latency: "interactive",
       contextTokens: Math.max(512, Math.ceil((options.goal.length + (options.context?.length ?? 0) + (oneShotContext?.chars ?? 0)) / 4) + 512),
       expectedOutputTokens: oneShotContext ? 4_000 : 800,
