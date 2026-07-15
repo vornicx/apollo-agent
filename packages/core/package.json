@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-core",
-  "version": "0.2.0-alpha.7",
+  "version": "0.2.0-alpha.8",
   "private": true,
   "description": "Apollo pipeline engine: verified task lifecycle (plan → route → execute → verify) and typed event bus.",
   "type": "module",

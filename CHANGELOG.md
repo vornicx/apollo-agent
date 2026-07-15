@@ -2,6 +2,13 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.8 — 2026-07-15
+
+### Fixed
+
+- Linux release automation waits for the asynchronously written AppImage to produce five identical size/mtime/content fingerprints before checksumming and attesting it.
+- CI downloads the published AppImage and compares it with `SHA256SUMS`, preventing a green release when the uploaded bytes differ from the checksum asset.
+
 ## 0.2.0-alpha.7 — 2026-07-15
 
 ### Fixed

@@ -31,6 +31,8 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: npm run build:desktop
+      - name: Wait for AppImage to stabilize
+        run: node scripts/wait-artifact-stable.mjs packages/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
       - name: Verify packages and generate checksums
         working-directory: packages/desktop/src-tauri/target/release/bundle
         run: |
@@ -52,3 +54,12 @@ jobs:
             packages/desktop/src-tauri/target/release/bundle/deb/*.deb
             packages/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
             packages/desktop/src-tauri/target/release/bundle/SHA256SUMS
+      - name: Verify the published AppImage checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/apollo-release-verify
+          gh release download "${GITHUB_REF_NAME}" --pattern '*.AppImage' --dir /tmp/apollo-release-verify
+          expected="$(awk '$2 ~ /^appimage\// { print $1 }' packages/desktop/src-tauri/target/release/bundle/SHA256SUMS)"
+          actual="$(sha256sum /tmp/apollo-release-verify/*.AppImage | cut -d' ' -f1)"
+          test -n "$expected" && test "$expected" = "$actual"
