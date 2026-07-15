@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { inferOneShotChecks, prepareOneShotContext, shouldTryOneShot } from "../src/index";
+import { assessOneShot, inferOneShotChecks, prepareOneShotContext, shouldTryOneShot } from "../src/index";
 
 describe("one-shot harness context", () => {
   it("runs baseline checks and prioritizes a bounded relevant snapshot", async () => {
@@ -40,5 +40,39 @@ describe("one-shot harness context", () => {
     expect(inferOneShotChecks(workspace, "Fix the TypeScript types")).toEqual([
       { type: "command_succeeds", command: "npm run typecheck" },
     ]);
+  });
+
+  it("reuses unchanged snapshot content and refreshes only changed files", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-oneshot-incremental-"));
+    const cacheDir = mkdtempSync(join(tmpdir(), "apollo-oneshot-cache-"));
+    writeFileSync(join(workspace, "target.js"), "export const value = 1;\n");
+    const first = await prepareOneShotContext(workspace, "Fix target.js", [], { cacheDir });
+    const second = await prepareOneShotContext(workspace, "Fix target.js", [], { cacheDir });
+    expect(first.refreshedFiles).toBeGreaterThan(0);
+    expect(second.reusedFiles).toBe(second.files.length);
+    expect(second.refreshedFiles).toBe(0);
+    expect(second.fingerprint).toBe(first.fingerprint);
+
+    writeFileSync(join(workspace, "target.js"), "export const value = 200;\n");
+    const third = await prepareOneShotContext(workspace, "Fix target.js", [], { cacheDir });
+    expect(third.refreshedFiles).toBe(1);
+    expect(third.fingerprint).not.toBe(first.fingerprint);
+  });
+
+  it("selects exact patches for large bounded files and skips insufficient context", () => {
+    const base = {
+      text: "x",
+      files: ["src/large.ts"],
+      treeFiles: 20,
+      chars: 40_000,
+      baseline: [],
+      truncated: false,
+      reusedFiles: 0,
+      refreshedFiles: 1,
+      largestFileChars: 20_000,
+      fingerprint: "abc",
+    };
+    expect(assessOneShot(base, "Fix src/large.ts")).toMatchObject({ eligible: true, mode: "patch" });
+    expect(assessOneShot({ ...base, files: [], treeFiles: 500, truncated: true }, "Fix it").eligible).toBe(false);
   });
 });

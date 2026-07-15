@@ -22,12 +22,17 @@ mission also writes the same versioned mission/evidence contract as an ordinary 
 
 ## Core suite
 
-The initial public suite contains ten reproducible tasks spanning repair, implementation,
+The public suite contains eleven reproducible tasks spanning repair, implementation,
 refactoring, investigation, multi-file work, contradictory goals, missing external authority, and
-ambiguous destructive requests. Successful work must pass real checks. For an honest-stop case,
+ambiguous destructive requests. It includes a large-file exact-patch task. Successful work must pass real checks. For an honest-stop case,
 claiming success is counted as a false success.
 
 ## Current measured evidence
+
+The alpha.5 policy gate targeted the new large-file task for three repetitions: 3/3 correct, zero
+false successes, patch selected 3/3 at score 0.91, one call/run and 2.3 s median
+(`.apollo/benchmarks/benchmark-1784137232280/report.json`). The seven editing tasks then passed
+7/7 with one call/run and 3.1 s median (`.apollo/benchmarks/benchmark-1784137271752/report.json`).
 
 The alpha.4 one-shot gate ran repair, implementation, and source refactoring through the routed
 runtime on 2026-07-15. It scored 3/3 with zero false successes, a 3.3 s median, and exactly one
@@ -69,9 +74,10 @@ the same fixed model workspace tools but no planner, critic, independent verifie
 memory. `apollo-memory` remains reserved until its controlled corpus and distractor protocol land;
 Apollo refuses to label simulated numbers as measurements.
 
-Repeated reports use schema version 4 and include selected execution depth, model-call count,
+Repeated reports use schema version 5 and include selected execution depth, model-call count,
 calls per run, mean, median, p95, sample standard deviation, total turns, and a Wilson 95% interval for correctness. Use `--label` to record the machine or
-release tag. A publishable comparison should use `--variant all --repeat 5` or more.
+release tag. They also record one-shot eligibility/score, full/patch selection and snapshot reuse.
+Use `--task <id>` for a targeted gate. A publishable comparison should use `--variant all --repeat 5` or more.
 `--concurrency` bounds parallel attempts; reports retain deterministic task/variant/repetition order.
 Provider exceptions are marked `invalid` and excluded from correctness, latency, cost, and confidence
 intervals. A terminal provider quota error stops new work so a depleted account cannot masquerade as

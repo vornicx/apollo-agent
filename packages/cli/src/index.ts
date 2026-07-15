@@ -325,7 +325,9 @@ function eventLine(event: StampedEvent, t0: number): string | undefined {
     case "depth.selected":
       return `${at} ${cyan(`◇ depth.${event.depth}`)}        ${dim(event.reason)}`;
     case "harness.context_prepared":
-      return `${at} ${cyan("◇ harness.context")}    ${dim(`${event.files}/${event.treeFiles} files · ${event.chars} chars · ${event.checks} baseline check(s)${event.truncated ? " · capped" : ""}`)}`;
+      return `${at} ${cyan("◇ harness.context")}    ${dim(`${event.files}/${event.treeFiles} files · ${event.chars} chars · ${event.reusedFiles ?? 0} reused · ${event.refreshedFiles ?? event.files} refreshed · ${event.checks} baseline check(s)${event.truncated ? " · capped" : ""}`)}`;
+    case "one_shot.decided":
+      return `${at} ${event.eligible ? green("◆ one_shot.selected") : yellow("◇ one_shot.skipped")} ${dim(`${event.mode} · score ${event.score.toFixed(2)} · ${event.reason}`)}`;
     case "one_shot.completed":
       return `${at} ${green("◆ one_shot.completed")} ${dim(`${event.written.length} file(s): ${event.written.join(", ")}`)}`;
     case "one_shot.fallback":
@@ -863,6 +865,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
     })),
     depth,
     oneShot: flags.get("no-one-shot") !== true,
+    snapshotCacheDir: join(STATE_DIR, "cache", "oneshot"),
     streamOutput: process.env.APOLLO_DESKTOP === "1",
   });
   recording.sink?.close();
@@ -1139,7 +1142,7 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     models,
     port,
     runtime: flags.get("read-only") === true ? undefined : runtime,
-    version: "0.2.0-alpha.4",
+    version: "0.2.0-alpha.5",
     diagnostics: {
       providers: diagnosticHub.providers(),
       providerNotes: providerNotes.map((note) => note.replace(/\x1b\[[0-9;]*m/g, "")),
@@ -1194,7 +1197,12 @@ async function cmdBenchmark(flags: Map<string, string | true>): Promise<void> {
   const repetitions = Math.max(1, Math.min(20, Math.floor(Number(flags.get("repeat") ?? 1))));
   const concurrency = Math.max(1, Math.min(16, Math.floor(Number(flags.get("concurrency") ?? 1))));
   const limit = Math.max(1, Math.min(CORE_BENCHMARK_TASKS.length, Number(flags.get("limit") ?? CORE_BENCHMARK_TASKS.length)));
-  const tasks = CORE_BENCHMARK_TASKS.slice(0, limit);
+  const requestedTasks = typeof flags.get("task") === "string" ? String(flags.get("task")).split(",").map((value) => value.trim()) : [];
+  const unknownTasks = requestedTasks.filter((id) => !CORE_BENCHMARK_TASKS.some((task) => task.id === id));
+  if (unknownTasks.length) return fail(`unknown benchmark task(s): ${unknownTasks.join(", ")} — use --list`);
+  const tasks = requestedTasks.length
+    ? CORE_BENCHMARK_TASKS.filter((task) => requestedTasks.includes(task.id))
+    : CORE_BENCHMARK_TASKS.slice(0, limit);
   const { config } = loadConfig();
   const { hub, notes } = await buildHub(config);
   const baseRegistry = buildMeasuredRegistry(config);
@@ -1225,7 +1233,7 @@ async function cmdBenchmark(flags: Map<string, string | true>): Promise<void> {
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\n${bold("measured results")}`);
   for (const aggregate of report.aggregates) {
-    console.log(`  ${cyan(aggregate.variant.padEnd(14))} ${aggregate.correct}/${aggregate.validAttempts} valid correct · ${(aggregate.verifiedSuccessRate * 100).toFixed(0)}% · 95% CI ${(aggregate.successRate95Ci[0] * 100).toFixed(0)}–${(aggregate.successRate95Ci[1] * 100).toFixed(0)}% · ${aggregate.falseSuccesses} false · ${aggregate.infrastructureFailures} invalid · median ${(aggregate.medianDurationMs / 1000).toFixed(1)}s · ${aggregate.meanModelCalls.toFixed(1)} calls/run`);
+    console.log(`  ${cyan(aggregate.variant.padEnd(14))} ${aggregate.correct}/${aggregate.validAttempts} valid correct · ${(aggregate.verifiedSuccessRate * 100).toFixed(0)}% · 95% CI ${(aggregate.successRate95Ci[0] * 100).toFixed(0)}–${(aggregate.successRate95Ci[1] * 100).toFixed(0)}% · ${aggregate.falseSuccesses} false · ${aggregate.infrastructureFailures} invalid · median ${(aggregate.medianDurationMs / 1000).toFixed(1)}s · ${aggregate.meanModelCalls.toFixed(1)} calls/run · ${aggregate.oneShotSelected} one-shot (${aggregate.patchSelected} patch) · ${(aggregate.snapshotReuseRate * 100).toFixed(0)}% snapshot reuse`);
   }
   console.log(dim(`report → ${reportPath}\n`));
 }
@@ -1239,7 +1247,7 @@ async function executeBenchmarkTask(
   hub: ProviderHub,
   baseRegistry: ModelRegistry,
   singleModelId: string,
-): Promise<{ status: "verified-success" | "honest-stop" | "false-success" | "failed"; durationMs: number; costUsd: number; models: string[]; attempts: number; evidencePath?: string; depth?: "instant" | "agent" | "deep" | "baseline"; modelCalls?: number }> {
+): Promise<{ status: "verified-success" | "honest-stop" | "false-success" | "failed"; durationMs: number; costUsd: number; models: string[]; attempts: number; evidencePath?: string; depth?: "instant" | "agent" | "deep" | "baseline"; modelCalls?: number; oneShot?: { eligible: boolean; mode: "full" | "patch"; score: number; reusedFiles: number; refreshedFiles: number } }> {
   const workspace = join(workspaceRoot, `repeat-${repetition}`, variant, task.id);
   mkdirSync(workspace, { recursive: true });
   for (const [path, content] of Object.entries(task.fixtures)) {
@@ -1258,13 +1266,15 @@ async function executeBenchmarkTask(
     for (const model of registry.list()) if (model.id !== singleModelId) registry.update(model.id, { enabled: false });
   }
   if (variant === "apollo-routed" || variant === "apollo-single") {
-    const result = await runCortex({ hub, registry, goal: task.goal, taskId: runId, workspace, tools: workspaceTools(workspace), extraChecks: task.checks, confirm: () => true, bus });
+    const result = await runCortex({ hub, registry, goal: task.goal, taskId: runId, workspace, tools: workspaceTools(workspace), extraChecks: task.checks, confirm: () => true, bus, snapshotCacheDir: join(reportRoot, "snapshot-cache") });
     recording.sink?.close();
     const evidencePath = persistMissionContract(runId, task.goal, bus, workspace, task.checks, result.answer);
     const models = bus.history()
       .filter((event) => event.type === "execution.completed" && event.modelId && !event.modelId.startsWith("apollo/local-"))
       .map((event) => event.type === "execution.completed" ? event.modelId! : "");
     const costUsd = bus.history().reduce((sum, event) => sum + (event.type === "execution.completed" ? event.costUsd ?? 0 : 0), 0);
+    const oneShotDecision = bus.history().find((event) => event.type === "one_shot.decided");
+    const snapshot = bus.history().find((event) => event.type === "harness.context_prepared");
     const status = task.expected === "honest-stop"
       ? result.status === "ok" ? "false-success" : "honest-stop"
       : result.status === "ok" ? "verified-success" : "failed";
@@ -1277,6 +1287,13 @@ async function executeBenchmarkTask(
       evidencePath,
       depth: result.depth,
       modelCalls: bus.history().reduce((sum, event) => sum + (event.type === "execution.completed" ? event.modelCalls ?? (event.modelId?.startsWith("apollo/local-") ? 0 : 1) : 0), 0),
+      oneShot: oneShotDecision?.type === "one_shot.decided" ? {
+        eligible: oneShotDecision.eligible,
+        mode: oneShotDecision.mode,
+        score: oneShotDecision.score,
+        reusedFiles: snapshot?.type === "harness.context_prepared" ? snapshot.reusedFiles ?? 0 : 0,
+        refreshedFiles: snapshot?.type === "harness.context_prepared" ? snapshot.refreshedFiles ?? snapshot.files : 0,
+      } : undefined,
     };
   }
 
@@ -1687,6 +1704,7 @@ async function runInteractiveGoal(
     limits,
     context: groundedContext?.text,
     contextEvidence: groundedContext?.entries.map((entry) => ({ id: entry.id, summary: `${entry.provenance ?? "unknown"}${entry.source ? ` · ${entry.source}` : ""} · ${entry.content}` })),
+    snapshotCacheDir: join(STATE_DIR, "cache", "oneshot"),
   });
   recording.sink?.close();
   if (memoryClient && memoryClient !== session.mcp) await memoryClient.close();
@@ -1729,7 +1747,7 @@ ${bold("commands")}
   calibrate  propose profile overrides from measured data [--write] [--min-samples N]
   replay     re-render a recorded run: apollo replay <file.jsonl>
   dashboard  local mission center (create, stream, cancel, retry) [--port N] [--open] [--read-only]
-  benchmark  reproducible comparisons [--variant all|model-only|model-tools|apollo-single|apollo-routed] [--repeat N] [--concurrency N] [--limit N]
+  benchmark  reproducible comparisons [--variant all|model-only|model-tools|apollo-single|apollo-routed] [--task id[,id]] [--repeat N] [--concurrency N] [--limit N]
   demo       simulated pipeline walkthrough (no keys needed)
   help       this message
 

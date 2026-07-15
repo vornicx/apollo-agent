@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { CORE_BENCHMARK_TASKS, runBenchmark } from "../src/index";
 
 describe("benchmark suite", () => {
-  it("contains ten reproducible tasks spanning success and honest stops", () => {
-    expect(CORE_BENCHMARK_TASKS).toHaveLength(10);
+  it("contains reproducible tasks spanning full files, patches, success, and honest stops", () => {
+    expect(CORE_BENCHMARK_TASKS).toHaveLength(11);
+    expect(CORE_BENCHMARK_TASKS.some((task) => task.id === "large-file-patch")).toBe(true);
     expect(new Set(CORE_BENCHMARK_TASKS.map((task) => task.category)).size).toBeGreaterThanOrEqual(5);
     expect(CORE_BENCHMARK_TASKS.some((task) => task.expected === "honest-stop")).toBe(true);
   });
@@ -18,7 +19,7 @@ describe("benchmark suite", () => {
     }));
     expect(report.aggregates[0]).toMatchObject({ variant: "model-only", correct: 0, falseSuccesses: 2 });
     expect(report.aggregates[1]).toMatchObject({ variant: "apollo-routed", correct: 2, verifiedSuccessRate: 1 });
-    expect(report.schemaVersion).toBe(4);
+    expect(report.schemaVersion).toBe(5);
     expect(report.aggregates[1].successRate95Ci).toHaveLength(2);
   });
 

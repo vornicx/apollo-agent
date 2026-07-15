@@ -2,6 +2,22 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.5 — 2026-07-15
+
+### Added
+
+- Incremental private snapshot caching with per-file reuse/refresh telemetry and content fingerprints.
+- Automatic scored selection between complete-file one-shots, exact SEARCH/REPLACE patches, and the existing agent fallback.
+- Schema-v5 benchmark metrics and targeted `benchmark --task <id>` runs, including a reproducible large-file patch task.
+
+### Changed
+
+- One-shot output is staged and committed as a rollback-capable batch; patches are materialized in memory before entering the same transaction.
+
+### Fixed
+
+- File application rejects symbolic-link path segments and restores previously committed files when a later replacement fails.
+
 ## 0.2.0-alpha.4 — 2026-07-15
 
 ### Added

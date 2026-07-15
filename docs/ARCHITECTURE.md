@@ -269,9 +269,16 @@ Every interactive run records to `.apollo/runs` and streams to the dashboard lik
 
 For ordinary workspace work, Cortex builds a bounded deterministic snapshot before asking the
 model to act: a filtered tree, manifests, goal-relevant source and tests, plus baseline check
-results. The selected model returns complete file blocks once. Apollo validates every path before
-the first mutation, requests policy approval for each write, rereads each changed artifact, and
-runs explicit or locally inferred checks. A passing attempt finishes in one provider call.
+results. A private mode-0600 cache keyed by workspace reuses unchanged selected content using
+nanosecond mtime and size, while changed/deleted files refresh or disappear. Observable signals
+(target specificity, context breadth, truncation, workspace size and baseline evidence) produce
+an auditable eligibility score. Small edit surfaces request complete files; large existing files
+request exact unique SEARCH/REPLACE patches.
+
+Patches are materialized entirely in memory. Apollo then validates all paths and symlink segments,
+requests policy approval per write, stages every output and backup on the workspace filesystem, and
+commits the group. An apply error restores committed originals before surfacing failure. Successful
+changes are reread and explicit or inferred checks run outside the model.
 
 `NEEDS_AGENT`, truncated output, an unsafe apply, or failed verification emits
 `one_shot.fallback` and enters the existing tool loop with the failure and current-workspace state;
@@ -325,6 +332,9 @@ The intended loop: `buildContext` before planning, `remember` durable outcomes a
 - **M2.7.1 ✅ (one-shot harness)** — bounded relevance-ranked workspace snapshots, complete-file
   one-shot edits, prevalidated and permission-gated apply, inferred deterministic checks, and a
   state-preserving fallback to the tool loop. `apollo cortex --no-one-shot` disables it.
+- **M2.7.2 ✅ (incremental + transactional)** — private incremental snapshot cache, measured
+  one-shot score, automatic full-file/exact-patch mode, symlink-safe transactional apply with
+  rollback, and schema-v5 benchmark telemetry for policy decisions.
 - **M2.8 ✅ (real work + safety)** — workspace tools (`write_file`/`edit_file`/`run_command`,
   path-jailed, destructive-flagged) for the agent and cortex executor; per-tool permission gating
   (confirm policy → CONFIRMATION_REQUIRED); parallel independent reads with ordered side effects; the verifier's active

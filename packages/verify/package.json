@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-verify",
-  "version": "0.2.0-alpha.4",
+  "version": "0.2.0-alpha.5",
   "private": true,
   "description": "Apollo task-level verification: workspace file application from model output and command verifiers (tests, typecheck, anything with an exit code).",
   "type": "module",

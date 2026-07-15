@@ -21,8 +21,21 @@ spend. A user can force any lane with `--depth` when domain knowledge beats the 
 - With at least five samples, routing uses measured effective throughput in memory.
 - `apollo calibrate --write` persists effective throughput separately from raw provider generation
   speed. Quality scores are never inferred from speed.
-- Benchmark schema v4 records lane and model-call count. Compare correctness and false successes
-  first, then calls, median/p95 latency, and cost.
+- Benchmark schema v5 records lane, model-call count, one-shot score, full/patch choice and snapshot
+  reuse. Compare correctness and false successes first, then calls, median/p95 latency, and cost.
+
+## Alpha.5 incremental/patch evidence
+
+Measured on 2026-07-15 in this checkout:
+
+- The targeted large-file task ran three times: 3/3 correct, zero false successes, patch selected
+  3/3 at score 0.91, one provider call/run, 33 output tokens/run, and 2.3 s median
+  (`.apollo/benchmarks/benchmark-1784137232280/report.json`).
+- The seven-task editing regression passed 7/7 with zero false successes, one call/run and 3.1 s
+  median. Six tasks selected complete files and the large-file task selected a patch
+  (`.apollo/benchmarks/benchmark-1784137271752/report.json`).
+- Snapshot reuse is verified deterministically by tests that observe unchanged, changed and deleted
+  files. Benchmark repetitions deliberately use isolated workspaces, so their reuse metric is 0%.
 
 The initial regression gate is structural: an exact greeting must select `instant`, perform zero
 provider calls, and still record one local execution; an ordinary task must select `agent` without planner/critic/verifier calls; forced

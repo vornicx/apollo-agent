@@ -317,4 +317,48 @@ describe("runCortex", () => {
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "one_shot.fallback", reason: expect.stringContaining("inspect") }));
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "verification.passed" }));
   });
+
+  it("uses an exact patch one-shot for a large existing file", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-one-shot-patch-"));
+    const padding = "// retained padding\n".repeat(800);
+    writeFileSync(join(workspace, "large.js"), `export const value = 1;\n${padding}`);
+    let calls = 0;
+    const adapter: ProviderAdapter = {
+      provider: "test",
+      supportsTools: true,
+      supportsResponseFormat: true,
+      async complete(request) {
+        calls += 1;
+        expect(request.messages[0].content).toContain("SEARCH/REPLACE");
+        return {
+          text: [
+            "```patch:large.js",
+            "@@ SEARCH",
+            "export const value = 1;",
+            "@@ REPLACE",
+            "export const value = 2;",
+            "@@ END",
+            "```",
+          ].join("\n"),
+          usage: { inputTokens: 5_000, outputTokens: 40 },
+        };
+      },
+    };
+    const bus = new EventBus();
+    const result = await runCortex({
+      hub: new ProviderHub().register(adapter),
+      registry: registryWith(model()),
+      goal: "Fix large.js so value is 2",
+      workspace,
+      tools: workspaceTools(workspace),
+      extraChecks: [{ type: "file_contains", path: "large.js", text: "value = 2" }],
+      confirm: () => true,
+      bus,
+    });
+    expect(result.status).toBe("ok");
+    expect(calls).toBe(1);
+    expect(readFileSync(join(workspace, "large.js"), "utf8")).toContain("value = 2");
+    expect(readFileSync(join(workspace, "large.js"), "utf8")).toContain("retained padding");
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "one_shot.decided", mode: "patch", eligible: true }));
+  });
 });

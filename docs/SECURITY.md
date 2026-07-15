@@ -27,6 +27,16 @@ Mission approval (`--yes` or the Desktop checkbox) satisfies `ask`; it never ove
 Critical access therefore requires an explicit project-policy change made outside the model run.
 Every evaluated side effect emits `permission.decided` with the tool, risk, decision, and reason.
 
+One-shot file output is validated as an untrusted batch. Absolute/traversal paths, duplicates and
+any existing symbolic-link segment are rejected before commit. Exact patches must match once.
+Outputs and backups are staged on the same workspace filesystem; if a later replacement fails,
+already committed files are restored before the error reaches the fallback agent.
+
+Incremental context snapshots live below Apollo's state directory, not inside source control. Cache
+files use mode `0600`, exclude the same secret/dotfile paths as live context selection, are keyed by
+the resolved workspace, and prune deleted files. Cache failure only disables reuse; it cannot skip
+verification or grant write authority.
+
 ## Audit redaction
 
 The JSONL sink redacts common API-key, bearer-token, and GitHub-token shapes before appending an

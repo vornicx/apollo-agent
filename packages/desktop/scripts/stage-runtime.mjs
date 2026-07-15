@@ -24,7 +24,7 @@ copyFileSync(process.execPath, nodeTarget);
 if (process.platform !== "win32") chmodSync(nodeTarget, 0o755);
 writeFileSync(join(runtimeDir, "runtime.json"), `${JSON.stringify({
   schemaVersion: 1,
-  version: "0.2.0-alpha.4",
+  version: "0.2.0-alpha.5",
   node: process.version,
   platform: process.platform,
   arch: process.arch,

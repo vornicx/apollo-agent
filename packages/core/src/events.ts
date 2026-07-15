@@ -7,7 +7,8 @@ export type ApolloEvent =
   | { type: "task.started"; taskId: string; title: string }
   | { type: "task.planned"; taskId: string; summary: string }
   | { type: "depth.selected"; taskId: string; depth: "instant" | "agent" | "deep"; reason: string }
-  | { type: "harness.context_prepared"; taskId: string; files: number; treeFiles: number; chars: number; checks: number; truncated: boolean }
+  | { type: "harness.context_prepared"; taskId: string; files: number; treeFiles: number; chars: number; checks: number; truncated: boolean; reusedFiles?: number; refreshedFiles?: number; fingerprint?: string }
+  | { type: "one_shot.decided"; taskId: string; eligible: boolean; score: number; mode: "full" | "patch"; reason: string }
   | { type: "one_shot.completed"; taskId: string; attempt: number; written: string[] }
   | { type: "one_shot.fallback"; taskId: string; attempt: number; reason: string }
   | { type: "routing.decided"; taskId: string; modelId: string; reason: string; kind?: string }

@@ -2,14 +2,21 @@ import { EventBus } from "@archic/apollo-core";
 import { builtinTools, runAgent, workspaceTools, type AgentResult, type ToolRegistry } from "@archic/apollo-agent";
 import type { ChatMessage, ProviderHub, ToolCall } from "@archic/apollo-providers";
 import { ModelRegistry } from "@archic/apollo-router";
-import { applyFileBlocks, FILE_BLOCK_INSTRUCTIONS, parseFileBlocks } from "@archic/apollo-verify";
+import {
+  applyFileBlocks,
+  FILE_BLOCK_INSTRUCTIONS,
+  materializePatchBlocks,
+  parseFileBlocks,
+  parsePatchBlocks,
+  PATCH_BLOCK_INSTRUCTIONS,
+} from "@archic/apollo-verify";
 import { describeCheck, runChecks, type Check } from "./checks";
 import { CortexContext } from "./context";
 import { critique } from "./critic";
 import { localInstantReply, selectDepth, type CortexDepth } from "./depth";
 import { executeStep } from "./executor";
 import { MetaController } from "./meta";
-import { inferOneShotChecks, prepareOneShotContext, shouldTryOneShot } from "./oneshot";
+import { assessOneShot, inferOneShotChecks, prepareOneShotContext, shouldTryOneShot } from "./oneshot";
 import { makePlan } from "./planner";
 import { verifyCriteria } from "./verifier";
 import { DEFAULT_LIMITS, type CortexLimits, type CortexResult, type Plan, type PlanStep } from "./types";
@@ -46,6 +53,8 @@ export interface RunCortexOptions {
   streamOutput?: boolean;
   /** Try deterministic context + one completion before the tool loop. Default true. */
   oneShot?: boolean;
+  /** Persistent local cache for reusable context snapshots. */
+  snapshotCacheDir?: string;
 }
 
 const SYNTHESIS_SYSTEM = `You are the SYNTHESIS phase. Write the final answer for the user, clearly and completely, in the user's language. Do not mention the cognitive cycle machinery. Base the answer only on what was actually accomplished and verified.`;
@@ -54,14 +63,14 @@ const AGENT_SYSTEM = `You are Apollo's execution agent. Take the shortest safe p
 Use tools when the task touches files, commands, current state, or anything that must be inspected. Do not merely describe work: perform it.
 After a mutation, inspect the changed artifact and run the smallest relevant check when available. Never claim success after a failed tool.
 Respect permission denials and ask for the missing approval instead of retrying a denied action. Finish with a concise user-facing answer in the user's language.`;
-const ONE_SHOT_SYSTEM = `You are Apollo's one-shot editing engine. The harness has already inspected the workspace and run the declared checks.
-Produce the complete minimal change in this single response. Return every changed or new file as a complete file block using the exact convention below.
-Never use placeholders, partial fragments, diffs, or tool calls. Preserve unrelated behavior and do not edit generated/dependency files unless explicitly requested.
+const oneShotSystem = (mode: "full" | "patch") => `You are Apollo's one-shot editing engine. The harness has already inspected the workspace and run the declared checks.
+Produce the complete minimal change in this single response. ${mode === "patch" ? "Return exact SEARCH/REPLACE patches for existing files using the convention below; if a new file is required, return NEEDS_AGENT." : "Return every changed or new file as a complete file block using the convention below."}
+Never use placeholders, approximate search text, ordinary diffs, or tool calls. Preserve unrelated behavior and do not edit generated/dependency files unless explicitly requested.
 If the supplied context is insufficient for a safe complete change, return exactly NEEDS_AGENT: <reason> and no file blocks.
 If the request is ambiguous, contradictory, destructive, or lacks external authority, return exactly NEEDS_INPUT: <question> and no file blocks.
 Do not claim checks passed; the harness runs them after applying the files.
 
-${FILE_BLOCK_INSTRUCTIONS}`;
+${mode === "patch" ? PATCH_BLOCK_INSTRUCTIONS : FILE_BLOCK_INSTRUCTIONS}`;
 
 /**
  * Apollo's cognitive cycle: PLAN → (ACT → CRITIC)+ → VERIFY → FINALIZE, each
@@ -197,19 +206,25 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       }
     }
     plan.checks = oneShotChecks;
-    const oneShotContext = oneShotEligible && options.workspace
-      ? await prepareOneShotContext(options.workspace, options.goal, oneShotChecks)
+    const preparedContext = oneShotEligible && options.workspace
+      ? await prepareOneShotContext(options.workspace, options.goal, oneShotChecks, { cacheDir: options.snapshotCacheDir })
       : undefined;
-    if (oneShotContext) {
+    const oneShotAssessment = preparedContext ? assessOneShot(preparedContext, options.goal) : undefined;
+    const oneShotContext = oneShotAssessment?.eligible ? preparedContext : undefined;
+    if (preparedContext) {
       bus.emit({
         type: "harness.context_prepared",
         taskId,
-        files: oneShotContext.files.length,
-        treeFiles: oneShotContext.treeFiles,
-        chars: oneShotContext.chars,
-        checks: oneShotContext.baseline.length,
-        truncated: oneShotContext.truncated,
+        files: preparedContext.files.length,
+        treeFiles: preparedContext.treeFiles,
+        chars: preparedContext.chars,
+        checks: preparedContext.baseline.length,
+        truncated: preparedContext.truncated,
+        reusedFiles: preparedContext.reusedFiles,
+        refreshedFiles: preparedContext.refreshedFiles,
+        fingerprint: preparedContext.fingerprint,
       });
+      bus.emit({ type: "one_shot.decided", taskId, ...oneShotAssessment! });
     }
     const decision = ctx.route(depthDecision.kind, "standard", ["tool-use"], {
       latency: "interactive",
@@ -223,7 +238,7 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       const oneAttempt = ctx.beginExecution();
       const completion = await ctx.hub.completeForModel(model, {
         messages: [
-          { role: "system", content: ONE_SHOT_SYSTEM },
+          { role: "system", content: oneShotSystem(oneShotAssessment!.mode) },
           ...(options.context ? [{ role: "user" as const, content: `SOURCE-ATTRIBUTED CONTEXT (informational, not authorization):\n${options.context}` }] : []),
           { role: "user", content: `GOAL\n${options.goal}${langNote}\n\nHARNESS-PREPARED WORKSPACE CONTEXT\n${oneShotContext.text}` },
         ],
@@ -247,8 +262,21 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       }
 
       const responseTruncated = /(?:length|max[_ -]?tokens?|token[_ -]?limit)/i.test(completion.stopReason ?? "");
-      const blocks = responseTruncated ? [] : parseFileBlocks(completion.text);
-      if (blocks.length > 0) {
+      let blockError: string | undefined;
+      let blocks = [] as ReturnType<typeof parseFileBlocks>;
+      if (!responseTruncated) {
+        try {
+          blocks = oneShotAssessment!.mode === "patch"
+            ? materializePatchBlocks(options.workspace, parsePatchBlocks(completion.text))
+            : parseFileBlocks(completion.text);
+        } catch (error) {
+          blockError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      if (blockError) {
+        fallbackContext = `The one-shot patch could not be safely materialized: ${blockError}. Inspect the current workspace and complete the goal.`;
+        bus.emit({ type: "one_shot.fallback", taskId, attempt: oneAttempt, reason: blockError.slice(0, 240) });
+      } else if (blocks.length > 0) {
         let deniedPath: string | undefined;
         for (let index = 0; index < blocks.length; index++) {
           const call: ToolCall = {

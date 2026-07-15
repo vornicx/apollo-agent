@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyFileBlocks, parseFileBlocks, runCommand, runVerifiers } from "../src/index";
+import { applyFileBlocks, materializePatchBlocks, parseFileBlocks, parsePatchBlocks, runCommand, runVerifiers } from "../src/index";
 
 describe("parseFileBlocks", () => {
   it("extracts file fences and ignores plain code fences", () => {
@@ -50,6 +50,47 @@ describe("applyFileBlocks", () => {
       { path: "same.txt", content: "one" },
       { path: "same.txt", content: "two" },
     ])).toThrowError(/duplicate/);
+  });
+
+  it("rolls back every committed file when a later commit fails", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-ws-"));
+    writeFileSync(join(workspace, "first.txt"), "before\n");
+    mkdirSync(join(workspace, "directory-target"));
+    expect(() => applyFileBlocks(workspace, [
+      { path: "first.txt", content: "after\n" },
+      { path: "directory-target", content: "cannot replace a directory\n" },
+    ])).toThrow();
+    expect(readFileSync(join(workspace, "first.txt"), "utf8")).toBe("before\n");
+    expect(existsSync(join(workspace, "directory-target"))).toBe(true);
+  });
+
+  it("refuses writes through workspace symlinks", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-ws-"));
+    const outside = mkdtempSync(join(tmpdir(), "apollo-outside-"));
+    symlinkSync(outside, join(workspace, "linked"));
+    expect(() => applyFileBlocks(workspace, [{ path: "linked/escape.txt", content: "x" }])).toThrowError(/symbolic link/);
+    expect(existsSync(join(outside, "escape.txt"))).toBe(false);
+  });
+});
+
+describe("exact patch blocks", () => {
+  it("parses and materializes sequential unique replacements without mutating", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-patch-"));
+    writeFileSync(join(workspace, "large.js"), "const a = 1;\nconst b = 2;\n");
+    const patches = parsePatchBlocks([
+      "```patch:large.js", "@@ SEARCH", "const a = 1;", "@@ REPLACE", "const a = 10;", "@@ END", "```",
+      "```patch:large.js", "@@ SEARCH", "const b = 2;", "@@ REPLACE", "const b = 20;", "@@ END", "```",
+    ].join("\n"));
+    const files = materializePatchBlocks(workspace, patches);
+    expect(files).toEqual([{ path: "large.js", content: "const a = 10;\nconst b = 20;\n" }]);
+    expect(readFileSync(join(workspace, "large.js"), "utf8")).toContain("a = 1");
+  });
+
+  it("rejects stale and ambiguous searches", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-patch-"));
+    writeFileSync(join(workspace, "x.txt"), "same\nsame\n");
+    expect(() => materializePatchBlocks(workspace, [{ path: "x.txt", search: "missing", replace: "x" }])).toThrowError(/not found/);
+    expect(() => materializePatchBlocks(workspace, [{ path: "x.txt", search: "same", replace: "x" }])).toThrowError(/not unique/);
   });
 });
 
