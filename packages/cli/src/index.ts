@@ -834,19 +834,24 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
 
   console.log(bold(`\n☀ Apollo cortex — ${selectedDepth.depth} lane\n`));
   const executionPolicy = workspace ? loadExecutionPolicy(workspace) : undefined;
-  const confirm = (call: ToolCall): boolean => {
+  const decideAndRecord = (call: ToolCall, scopedOneShot = false): boolean => {
     if (!executionPolicy) return approveAsked;
-    const decision = decideToolCall(executionPolicy, call, approveAsked, tools.risk(call.name));
+    const decision = decideToolCall(executionPolicy, call, approveAsked || scopedOneShot, tools.risk(call.name));
+    const reason = scopedOneShot && decision.allowed && decision.action === "ask" && !approveAsked
+      ? "explicit mission authorizes this bounded one-shot action"
+      : decision.reason;
     bus.emit({
       type: "permission.decided",
       taskId: runId,
       tool: call.name,
       risk: decision.risk,
       decision: decision.allowed ? "allow" : "deny",
-      reason: decision.reason,
+      reason,
     });
     return decision.allowed;
   };
+  const confirm = (call: ToolCall): boolean => decideAndRecord(call);
+  const confirmOneShot = (call: ToolCall): boolean => decideAndRecord(call, true);
   const result = await runCortex({
     hub,
     registry,
@@ -856,6 +861,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
     workspace,
     extraChecks,
     confirm,
+    confirmOneShot,
     bus,
     limits,
     context: groundedContext?.text,
@@ -1142,7 +1148,7 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     models,
     port,
     runtime: flags.get("read-only") === true ? undefined : runtime,
-    version: "0.2.0-alpha.8",
+    version: "0.2.0-alpha.9",
     diagnostics: {
       providers: diagnosticHub.providers(),
       providerNotes: providerNotes.map((note) => note.replace(/\x1b\[[0-9;]*m/g, "")),

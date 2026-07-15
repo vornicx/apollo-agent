@@ -2,6 +2,16 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.9 — 2026-07-15
+
+### Changed
+
+- An explicit narrow workspace mission now authorizes only its bounded one-shot transaction and allowlisted deterministic checks. The fallback agent remains behind the normal write/shell policy gates.
+
+### Fixed
+
+- Inferred checks remain mandatory when a one-shot action is denied, preventing an agent response with no mutation or test execution from being recorded as verified.
+
 ## 0.2.0-alpha.8 — 2026-07-15
 
 ### Fixed

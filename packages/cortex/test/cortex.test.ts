@@ -279,6 +279,65 @@ describe("runCortex", () => {
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "execution.completed", modelCalls: 1 }));
   });
 
+  it("authorizes only the bounded one-shot while leaving the fallback agent gated", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-scoped-one-shot-"));
+    writeFileSync(join(workspace, "package.json"), '{"type":"module"}');
+    writeFileSync(join(workspace, "add.js"), "export const add=(a,b)=>a-b;\n");
+    writeFileSync(join(workspace, "add.test.js"), "import test from 'node:test';import assert from 'node:assert/strict';import {add} from './add.js';test('add',()=>assert.equal(add(2,3),5));\n");
+    const adapter: ProviderAdapter = {
+      provider: "test",
+      supportsTools: true,
+      supportsResponseFormat: true,
+      async complete() {
+        return { text: "```file:add.js\nexport const add=(a,b)=>a+b;\n```", usage: { inputTokens: 100, outputTokens: 20 } };
+      },
+    };
+    const ordinaryCalls: string[] = [];
+    const scopedCalls: string[] = [];
+    const result = await runCortex({
+      hub: new ProviderHub().register(adapter),
+      registry: registryWith(model()),
+      goal: "Fix add.js so node --test passes",
+      workspace,
+      tools: workspaceTools(workspace),
+      confirm: (call) => { ordinaryCalls.push(call.name); return false; },
+      confirmOneShot: (call) => { scopedCalls.push(call.name); return true; },
+    });
+    expect(result.status).toBe("ok");
+    expect(scopedCalls).toEqual(["run_command", "write_file"]);
+    expect(ordinaryCalls).toEqual([]);
+    expect(readFileSync(join(workspace, "add.js"), "utf8")).toContain("a+b");
+  });
+
+  it("keeps inferred checks on a denied one-shot so fallback text cannot false-pass", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-denied-one-shot-"));
+    writeFileSync(join(workspace, "package.json"), '{"type":"module"}');
+    writeFileSync(join(workspace, "add.js"), "export const add=(a,b)=>a-b;\n");
+    writeFileSync(join(workspace, "add.test.js"), "import test from 'node:test';import assert from 'node:assert/strict';import {add} from './add.js';test('add',()=>assert.equal(add(2,3),5));\n");
+    const adapter: ProviderAdapter = {
+      provider: "test",
+      supportsTools: true,
+      supportsResponseFormat: true,
+      async complete() {
+        return { text: "I fixed it.", usage: { inputTokens: 50, outputTokens: 10 } };
+      },
+    };
+    const bus = new EventBus();
+    const result = await runCortex({
+      hub: new ProviderHub().register(adapter),
+      registry: registryWith(model()),
+      goal: "Fix add.js so node --test passes",
+      workspace,
+      tools: workspaceTools(workspace),
+      confirm: () => false,
+      confirmOneShot: () => false,
+      bus,
+    });
+    expect(result.status).toBe("failed");
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "verification.failed" }));
+    expect(bus.history().some((event) => event.type === "verification.passed")).toBe(false);
+  });
+
   it("falls back to the tool loop without restarting when one-shot context is insufficient", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "apollo-one-shot-fallback-"));
     let calls = 0;

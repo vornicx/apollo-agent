@@ -40,6 +40,12 @@ export interface RunCortexOptions {
   extraChecks?: Check[];
   /** Gate destructive tools (write/shell). Returning false denies + tells the model. */
   confirm?: (call: ToolCall) => boolean | Promise<boolean>;
+  /**
+   * Gate only the bounded one-shot transaction and its deterministic checks.
+   * This lets a controller authorize the exact requested mutation without
+   * granting the fallback agent blanket shell/write access.
+   */
+  confirmOneShot?: (call: ToolCall) => boolean | Promise<boolean>;
   limits?: Partial<CortexLimits>;
   bus?: EventBus;
   /** User language hint for the final answer. */
@@ -192,15 +198,15 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
       oneShotChecks = inferOneShotChecks(options.workspace, options.goal);
       for (let index = 0; index < oneShotChecks.length; index++) {
         const check = oneShotChecks[index];
-        if (check.type !== "command_succeeds" || !options.confirm) continue;
-        const allowed = await options.confirm({
+        const confirmOneShot = options.confirmOneShot ?? options.confirm;
+        if (check.type !== "command_succeeds" || !confirmOneShot) continue;
+        const allowed = await confirmOneShot({
           id: `one-shot-check-${index + 1}`,
           name: "run_command",
           arguments: { command: check.command },
         });
         if (!allowed) {
           oneShotEligible = false;
-          oneShotChecks = explicitChecks;
           break;
         }
       }
@@ -288,7 +294,8 @@ export async function runCortex(options: RunCortexOptions): Promise<CortexResult
             name: "write_file",
             arguments: { path: blocks[index].path, content: blocks[index].content },
           };
-          if (options.confirm && !(await options.confirm(call))) {
+          const confirmOneShot = options.confirmOneShot ?? options.confirm;
+          if (confirmOneShot && !(await confirmOneShot(call))) {
             deniedPath = blocks[index].path;
             break;
           }
