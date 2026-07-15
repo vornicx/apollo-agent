@@ -265,6 +265,19 @@ A single `LineSource` owns the readline stream (queued lines are never dropped, 
 session cleanly), which is also what makes the REPL scriptable: pipe commands in and it behaves.
 Every interactive run records to `.apollo/runs` and streams to the dashboard like any other.
 
+### One-shot-first agent lane
+
+For ordinary workspace work, Cortex builds a bounded deterministic snapshot before asking the
+model to act: a filtered tree, manifests, goal-relevant source and tests, plus baseline check
+results. The selected model returns complete file blocks once. Apollo validates every path before
+the first mutation, requests policy approval for each write, rereads each changed artifact, and
+runs explicit or locally inferred checks. A passing attempt finishes in one provider call.
+
+`NEEDS_AGENT`, truncated output, an unsafe apply, or failed verification emits
+`one_shot.fallback` and enters the existing tool loop with the failure and current-workspace state;
+already-applied work is not discarded. Destructive/high-risk goals bypass this lane and keep the
+deep cycle. `--no-one-shot` is the explicit escape hatch for debugging or comparisons.
+
 ## Memory (`@archic/apollo-memory`)
 
 `MemoryPort` mirrors the real Midas surface — `remember` (content, kind
@@ -309,6 +322,9 @@ The intended loop: `buildContext` before planning, `remember` durable outcomes a
 - **M2.7 ✅ (adaptive Cortex)** — deterministic instant/agent/deep selection, one-call conversation,
   a single-agent lane with deterministic post-checks, and the full autorouted
   plan→(act→critic)+→verify→finalize cycle for complex/high-risk work. `apollo cortex --depth`.
+- **M2.7.1 ✅ (one-shot harness)** — bounded relevance-ranked workspace snapshots, complete-file
+  one-shot edits, prevalidated and permission-gated apply, inferred deterministic checks, and a
+  state-preserving fallback to the tool loop. `apollo cortex --no-one-shot` disables it.
 - **M2.8 ✅ (real work + safety)** — workspace tools (`write_file`/`edit_file`/`run_command`,
   path-jailed, destructive-flagged) for the agent and cortex executor; per-tool permission gating
   (confirm policy → CONFIRMATION_REQUIRED); parallel independent reads with ordered side effects; the verifier's active

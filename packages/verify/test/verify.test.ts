@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,6 +37,19 @@ describe("applyFileBlocks", () => {
     const workspace = mkdtempSync(join(tmpdir(), "apollo-ws-"));
     expect(() => applyFileBlocks(workspace, [{ path: "../escape.txt", content: "x" }])).toThrowError(/outside/);
     expect(() => applyFileBlocks(workspace, [{ path: "/etc/apollo-nope", content: "x" }])).toThrowError(/outside/);
+  });
+
+  it("validates the complete response before writing and rejects duplicate paths", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-ws-"));
+    expect(() => applyFileBlocks(workspace, [
+      { path: "safe.txt", content: "would be partial" },
+      { path: "../escape.txt", content: "x" },
+    ])).toThrowError(/outside/);
+    expect(existsSync(join(workspace, "safe.txt"))).toBe(false);
+    expect(() => applyFileBlocks(workspace, [
+      { path: "same.txt", content: "one" },
+      { path: "same.txt", content: "two" },
+    ])).toThrowError(/duplicate/);
   });
 });
 

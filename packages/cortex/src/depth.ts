@@ -51,13 +51,17 @@ export function selectDepth(goal: string, requested: CortexDepth = "auto"): Dept
 }
 
 export function inferTaskKind(goal: string): TaskKind {
-  if (/\b(debug|diagnos|fix|corrige|repara|error|bug|falla)\b/iu.test(goal)) return "debugging";
+  if (/\b(debug|diagnos|fix|repair|corrige|repara|error|bug|fail(?:ing|ure)?|falla)\b/iu.test(goal)) return "debugging";
   if (/\b(refactor|refactoriza|reorganiza)\b/iu.test(goal)) return "refactoring";
+  // "Extract X into format.js" describes a source refactor, not data
+  // extraction. Keep it on the editing lane so it can use the one-shot
+  // snapshot instead of entering the generic tool loop.
+  if (/\b(extract|extrae)\b[\s\S]*\b(?:into|a|en)\b[\s\S]*\.[a-z0-9]{1,8}\b/iu.test(goal)) return "refactoring";
   if (/\b(review|revisa|audita|code review)\b/iu.test(goal)) return "code-review";
   if (/\b(research|investiga|busca|compara|analiza fuentes)\b/iu.test(goal)) return "research";
   if (/\b(resume|summari[sz]e|resumen)\b/iu.test(goal)) return "summarization";
   if (/\b(escribe|redacta|write|draft|copy)\b/iu.test(goal)) return "writing";
   if (/\b(extrae|extract|parsea)\b/iu.test(goal)) return "extraction";
-  if (/\b(crea|implementa|build|code|c[oó]digo|archivo|file|test)\b/iu.test(goal)) return "code-generation";
+  if (/\b(crea(?:r|te)?|implement(?:a|ar|s|ed|ing)?|build|code|c[oó]digo|archivo|files?|tests?)\b/iu.test(goal)) return "code-generation";
   return "conversation";
 }

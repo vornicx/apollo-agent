@@ -29,6 +29,14 @@ claiming success is counted as a false success.
 
 ## Current measured evidence
 
+The alpha.4 one-shot gate ran repair, implementation, and source refactoring through the routed
+runtime on 2026-07-15. It scored 3/3 with zero false successes, a 3.3 s median, and exactly one
+provider call per run (`.apollo/benchmarks/benchmark-1784123733825/report.json`). A separate
+same-fixture repair smoke completed in 2.2 s and one call
+(`.apollo/benchmarks/benchmark-1784123047106/report.json`), versus 12.5 s and six calls on alpha.3.
+Both still ended in deterministic workspace checks. These small samples are regression evidence,
+not a publishable general comparison.
+
 The complete ten-task suite was run on 2026-07-13 with a ChatGPT/Codex subscription after the
 runtime changes in this checkout:
 

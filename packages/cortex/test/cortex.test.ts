@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventBus } from "@archic/apollo-core";
 import { ProviderHub, type CompletionResult, type ProviderAdapter } from "@archic/apollo-providers";
 import { ModelRegistry, type ModelProfile } from "@archic/apollo-router";
-import { ToolRegistry } from "@archic/apollo-agent";
+import { ToolRegistry, workspaceTools } from "@archic/apollo-agent";
 import { runCortex } from "../src/index";
 
 function model(costPerMTok = 0): ModelProfile {
@@ -239,5 +239,82 @@ describe("runCortex", () => {
     expect(bus.history().filter((event) => event.type === "execution.started")).toHaveLength(1);
     expect(bus.history()).toContainEqual(expect.objectContaining({ type: "execution.completed", modelCalls: 1 }));
     expect(bus.history().some((event) => event.type === "critic.reviewed")).toBe(false);
+  });
+
+  it("repairs and verifies a workspace in one model call when context is sufficient", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-one-shot-"));
+    writeFileSync(join(workspace, "package.json"), '{"type":"module"}');
+    writeFileSync(join(workspace, "add.js"), "export const add=(a,b)=>a-b;\n");
+    writeFileSync(join(workspace, "add.test.js"), "import test from 'node:test';import assert from 'node:assert/strict';import {add} from './add.js';test('add',()=>assert.equal(add(2,3),5));\n");
+    let calls = 0;
+    const adapter: ProviderAdapter = {
+      provider: "test",
+      supportsTools: true,
+      supportsResponseFormat: true,
+      async complete() {
+        calls += 1;
+        return {
+          text: "Fixed the implementation.\n```file:add.js\nexport const add=(a,b)=>a+b;\n```",
+          usage: { inputTokens: 500, outputTokens: 40 },
+        };
+      },
+    };
+    const bus = new EventBus();
+    const result = await runCortex({
+      hub: new ProviderHub().register(adapter),
+      registry: registryWith(model()),
+      goal: "Fix add.js so node --test passes",
+      workspace,
+      tools: workspaceTools(workspace),
+      extraChecks: [{ type: "command_succeeds", command: "node --test" }],
+      confirm: () => true,
+      bus,
+    });
+    expect(result.status).toBe("ok");
+    expect(result.turns).toBe(1);
+    expect(calls).toBe(1);
+    expect(readFileSync(join(workspace, "add.js"), "utf8")).toContain("a+b");
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "harness.context_prepared" }));
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "one_shot.completed", written: ["add.js"] }));
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "execution.completed", modelCalls: 1 }));
+  });
+
+  it("falls back to the tool loop without restarting when one-shot context is insufficient", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "apollo-one-shot-fallback-"));
+    let calls = 0;
+    const adapter: ProviderAdapter = {
+      provider: "test",
+      supportsTools: true,
+      supportsResponseFormat: true,
+      async complete() {
+        calls += 1;
+        const usage = { inputTokens: 100, outputTokens: 20 };
+        if (calls === 1) return { text: "NEEDS_AGENT: inspect the workspace with tools", usage };
+        if (calls === 2) {
+          return {
+            text: "",
+            toolCalls: [{ id: "write-result", name: "write_file", arguments: { path: "result.txt", content: "ready\n" } }],
+            usage,
+          };
+        }
+        return { text: "Created and inspected result.txt.", usage };
+      },
+    };
+    const bus = new EventBus();
+    const result = await runCortex({
+      hub: new ProviderHub().register(adapter),
+      registry: registryWith(model()),
+      goal: "Create result.txt",
+      workspace,
+      tools: workspaceTools(workspace),
+      confirm: () => true,
+      bus,
+    });
+
+    expect(result.status).toBe("ok");
+    expect(calls).toBe(3);
+    expect(readFileSync(join(workspace, "result.txt"), "utf8")).toBe("ready\n");
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "one_shot.fallback", reason: expect.stringContaining("inspect") }));
+    expect(bus.history()).toContainEqual(expect.objectContaining({ type: "verification.passed" }));
   });
 });

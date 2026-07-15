@@ -373,6 +373,9 @@ function evMeta(ev){
   if(t === 'task.completed') return { cls:'green', k:'task.completed', d:'in ' + ev.attempts + ' attempt(s)' };
   if(t === 'task.failed') return { cls:'red', k:'task.failed', d: esc(ev.reason) };
   if(t === 'depth.selected') return { cls:'gold', k:'depth.' + esc(ev.depth), d: esc(ev.reason) };
+  if(t === 'harness.context_prepared') return { cls:'blue', k:'harness.context', d:ev.files+'/'+ev.treeFiles+' files · '+ev.chars+' chars · '+ev.checks+' check(s)'+(ev.truncated?' · capped':'') };
+  if(t === 'one_shot.completed') return { cls:'green', k:'one_shot.completed', d:(ev.written||[]).join(', ') };
+  if(t === 'one_shot.fallback') return { cls:'gold', k:'one_shot.fallback', d:esc(ev.reason) };
   if(t === 'plan.produced') return { cls:'gold', k:'plan.produced', d: ev.steps + ' step(s) · confidence ' + Number(ev.confidence).toFixed(2) + (ev.replan ? ' (replan)' : '') };
   if(t === 'step.started') return { cls:'blue', k:'step.started ' + ev.stepId, d: esc(ev.description) };
   if(t === 'step.finished') return { cls: ev.status === 'done' ? 'green' : 'red', k:'step.finished ' + ev.stepId, d: ev.status + (ev.note ? ' — ' + esc(ev.note) : '') };

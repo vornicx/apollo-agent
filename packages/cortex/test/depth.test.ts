@@ -25,5 +25,9 @@ describe("adaptive depth selector", () => {
   it("classifies the task kind without a model call", () => {
     expect(inferTaskKind("Investiga y compara estas fuentes")).toBe("research");
     expect(inferTaskKind("Implementa las pruebas")).toBe("code-generation");
+    expect(inferTaskKind("Implement a slug function and make the tests pass")).toBe("code-generation");
+    expect(inferTaskKind("Create two files")).toBe("code-generation");
+    expect(inferTaskKind("Extract formatting into format.js while preserving the API and tests.")).toBe("refactoring");
+    expect(inferTaskKind("Extract data from this CSV")).toBe("extraction");
   });
 });

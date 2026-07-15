@@ -6,9 +6,11 @@ Second infrastructure component of [Archic](https://github.com/vornicx) (the fir
 
 Apollo first chooses the minimum safe execution depth, then routes each necessary model call by
 specialization, quality, cost, and measured speed across every provider, subscription, and API you
-configure. Exact greetings answer locally with zero provider calls, normal work uses one agent loop, and only complex or
-high-risk work pays for the full plan/critic/verifier cycle. Nothing is reported done unless its
-lane's verification contract passed; every decision is explainable.
+configure. Exact greetings answer locally with zero provider calls. Normal workspace work starts
+with one bounded context snapshot and one complete edit response, then the harness applies permitted
+files and runs deterministic checks. Only insufficient one-shots fall through to the tool loop;
+complex or high-risk work pays for the full plan/critic/verifier cycle. Nothing is reported done
+unless its lane's verification contract passed; every decision is explainable.
 
 > Vision: [docs/VISION.md](docs/VISION.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Performance: [docs/PERFORMANCE.md](docs/PERFORMANCE.md) · Security: [docs/SECURITY.md](docs/SECURITY.md)
 
@@ -31,6 +33,7 @@ npm run apollo -- agent "What is 4891 * 12? Use the calculator." # tool-calling 
 npm run apollo -- agent "Recall what Apollo is." --mcp             # Midas memory as a tool
 npm run apollo -- cortex "Fix the failing test and prove it passes"  # full cognitive cycle
 npm run apollo -- cortex "hola" --depth instant     # force: auto|instant|agent|deep
+npm run apollo -- cortex "Fix it" --workspace . --no-one-shot # force the tool loop
 npm run apollo -- stats          # measured telemetry per model/kind from your recorded runs
 npm run apollo -- calibrate --write   # write measured overrides into apollo.config.json
 npm run apollo -- benchmark --variant all --repeat 3 --limit 1
@@ -99,7 +102,7 @@ cleanly and the pipeline escalates.
 | `@archic/apollo-memory` | `MemoryPort` mirroring Midas; `InMemoryMemory` impl + `MidasMemory` MCP adapter | Working, tested |
 | `@archic/apollo-providers` | One streaming port over Anthropic & OpenAI (SDKs), Google & Ollama (REST), plus Codex & Gemini-CLI subscription backends + `ProviderHub` real-cost pricing; **tool calls + structured output on all six adapters** | Working, tested; live against Ollama |
 | `@archic/apollo-agent` | Agentic loop (`runAgent`): tool registry, complete→call-tools→feed-results, `runStructured`, built-in + **workspace tools** (write/edit/run_command, jailed), permission gating, concurrent reads with ordered side effects, **MCP-tools bridge** | Working and tested |
-| `@archic/apollo-cortex` | **Adaptive runtime**: deterministic `instant`/`agent`/`deep` depth selection; zero-provider-call exact greetings, single agent loop with deterministic verification, or full plan → (act → critic)+ → verify → finalize. Live deltas, safe parallel reads, policy gates, evidence and honest stops in every lane. | Working and tested; deep cycle retained at full power |
+| `@archic/apollo-cortex` | **Adaptive runtime**: deterministic `instant`/`agent`/`deep` selection; zero-call greetings, bounded one-shot workspace snapshots with deterministic verification and state-preserving fallback, or full plan → (act → critic)+ → verify → finalize. Live deltas, policy gates, evidence and honest stops in every lane. | Working and tested; ordinary benchmark work verified at one call |
 | `@archic/apollo-benchmark` | Reproducible isolated workspaces, ten core tasks, comparison variants, false-success accounting, JSON reports | Working, tested; routed and single-model suites verified live at 10/10 |
 | `@archic/apollo-desktop` | Autonomous Tauri controller with embedded runtime; create/cancel/retry missions while evidence remains runtime-owned | Alpha packaging for `.deb` and AppImage |
 | `@archic/apollo-auth` | Detects & reuses official CLI logins (Claude Code, Codex, Gemini CLI) so subscriptions route at cost 0 | Working, tested |
@@ -125,7 +128,7 @@ What is real today vs. what is not yet:
 - ✅ Local dashboard: HTTP + SSE server serving the SPA and live run stream — verified over real HTTP (HTML, all API routes, live SSE during a run); client JS is syntax-checked. Note: rendered pixels weren't screenshot-verified in this environment (static CSS + vanilla JS over the verified API).
 - ✅ Tool calls + structured output on the provider port for **all** adapters — Anthropic & OpenAI (SDK native), Google Gemini & Gemini-CLI (functionDeclarations / responseSchema), Codex (Responses API function tools), Ollama — contract-tested per wire shape; the agentic loop (`apollo agent`) verified live against a local model (calculator called + result fed back; schema-constrained JSON parsed).
 - ✅ MCP tools as agent tools (`apollo agent --mcp`): any MCP server's tools become callable by the agent — verified live spawning the real Midas server and calling `midas__recall` against on-disk memory inside the loop.
-- ✅ Adaptive Cortex (`apollo cortex`, `--depth auto|instant|agent|deep`): deterministic selection keeps greetings to one call and ordinary work to one agent loop; complex/high-risk work retains the independently routed plan → (act → critic)+ → verify → finalize cycle. All lanes emit depth, timing, evidence, verification, and live answer deltas.
+- ✅ Adaptive Cortex (`apollo cortex`, `--depth auto|instant|agent|deep`): deterministic selection keeps greetings local and tries ordinary workspace work as a single complete response over a harness-curated snapshot. Every proposed write is permission-gated, all paths are validated before mutation, changed files are reread, and checks run outside the model. Insufficient or failed attempts continue from the current workspace in the tool loop; `--no-one-shot` disables the fast path. Complex/high-risk work retains the independently routed plan → (act → critic)+ → verify → finalize cycle.
 - ✅ Workspace tools + permission gating: `write_file`/`edit_file`/`run_command` (path-jailed, marked destructive) plus read tools; destructive calls are gated by a confirm policy (`--yes` / `--confirm`) — denied calls return CONFIRMATION_REQUIRED, never run. Tool calls in a turn run in parallel. Verified live: `apollo agent --workspace <dir> --yes` had the model call `write_file` and a real file appeared in the jail; unit tests cover writes, jailing, the non-unique-edit guard, shell, and gating.
 - ✅ Deterministic verifier checks: the planner emits machine-checkable criteria (`file_exists`, `file_contains`, `command_succeeds`) and you can enforce your own with `apollo cortex --check "file_exists:out.py ; command_succeeds:pytest"` — the harness verifies these against the real workspace **itself, no model in the loop**, so a model can't hallucinate past ground truth. Verified live (checks reported the real filesystem state and failed verification when a claimed file was absent) and by unit tests over real fs/shell.
 - ✅ Dashboard run search + diff: filter recorded runs live, and select two to compare side-by-side (status, model, cost, attempts, and event-type sequence with differences gold-highlighted) — served and verified over real HTTP.

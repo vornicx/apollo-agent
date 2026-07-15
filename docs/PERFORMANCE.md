@@ -6,7 +6,7 @@ the shallowest lane that preserves permissions, evidence, deterministic checks, 
 | Lane | Intended work | Model calls | Verification |
 |---|---|---:|---|
 | `instant` | Exact greetings and conversational acknowledgements | 0 locally, 1 when forced | Completion recorded and passed |
-| `agent` | Normal coding, debugging, writing, extraction | 1..N tool turns | Shell exits, rereads, user checks, policy |
+| `agent` | Normal coding, debugging, writing, extraction | 1 normally; 1 + fallback turns when needed | Baseline, shell exits, rereads, user checks, policy |
 | `deep` | Architecture, research, security, deployment, destructive/high-risk work | Multi-phase | Critic, independent verifier, deterministic checks |
 
 `auto` is deterministic and local; it does not spend a model call deciding how many model calls to
@@ -28,6 +28,22 @@ The initial regression gate is structural: an exact greeting must select `instan
 provider calls, and still record one local execution; an ordinary task must select `agent` without planner/critic/verifier calls; forced
 `deep` must preserve the complete cognitive cycle. Release evidence should add live TTFT and total
 duration from the packaged application.
+
+## Alpha.4 one-shot evidence
+
+Measured on 2026-07-15 in this checkout:
+
+- A three-task repair/implementation/refactor gate completed 3/3 correctly, with zero false
+  successes, a 3.3 s median, and exactly one provider call per task
+  (`.apollo/benchmarks/benchmark-1784123733825/report.json`).
+- The same `repair-node-test` fixture completed in 2.2 s and one call. Alpha.3's tool-loop smoke
+  used 12.5 s and six calls; the earlier deep route used 31.7 s and 11 turns.
+- A six-task integration smoke completed 6/6 correctly. Before the source-extraction classifier
+  fix it averaged 1.8 calls/run because one refactor entered the tool loop; the three-task gate
+  above verifies that exact refactor now completes in one call.
+
+These are small live regression gates, not general model-quality claims. They demonstrate that the
+harness can remove orchestration calls while retaining deterministic task checks.
 
 ## Alpha.3 smoke evidence
 

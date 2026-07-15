@@ -1,6 +1,6 @@
 [package]
 name = "apollo-desktop"
-version = "0.2.0-alpha.3"
+version = "0.2.0-alpha.4"
 description = "Native controller for Apollo Runtime"
 edition = "2021"
 

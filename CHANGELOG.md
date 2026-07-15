@@ -2,6 +2,23 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.4 — 2026-07-15
+
+### Added
+
+- One-shot-first workspace execution with relevance-ranked bounded context, baseline checks, complete-file application, post-write inspection, and deterministic verification.
+- Explicit `harness.context_prepared`, `one_shot.completed`, and `one_shot.fallback` events, plus `--no-one-shot` for controlled fallback and benchmarks.
+
+### Changed
+
+- Ordinary coding, debugging, and refactoring now attempt one model completion before entering the existing tool loop; failed attempts continue from the current workspace state.
+- Source extraction such as “extract into format.js” is classified as refactoring instead of data extraction.
+
+### Fixed
+
+- File blocks are all path-validated before the first write, preventing partial application when a later path is invalid.
+- Embedded Desktop runtimes watch their parent process and exit if the native shell is killed, avoiding stale runtimes on port 4317.
+
 ## 0.2.0-alpha.3 — 2026-07-14
 
 ### Added

@@ -324,6 +324,12 @@ function eventLine(event: StampedEvent, t0: number): string | undefined {
       return `${at} ${bold("▸ task.planned")}        ${event.summary}`;
     case "depth.selected":
       return `${at} ${cyan(`◇ depth.${event.depth}`)}        ${dim(event.reason)}`;
+    case "harness.context_prepared":
+      return `${at} ${cyan("◇ harness.context")}    ${dim(`${event.files}/${event.treeFiles} files · ${event.chars} chars · ${event.checks} baseline check(s)${event.truncated ? " · capped" : ""}`)}`;
+    case "one_shot.completed":
+      return `${at} ${green("◆ one_shot.completed")} ${dim(`${event.written.length} file(s): ${event.written.join(", ")}`)}`;
+    case "one_shot.fallback":
+      return `${at} ${yellow("◇ one_shot.fallback")}  ${dim(event.reason)}`;
     case "routing.decided":
       return `${at} ${cyan("⇢ routing.decided")}     ${cyan(event.modelId)}\n${dim(`             ${event.reason}`)}`;
     case "execution.started":
@@ -856,6 +862,7 @@ async function cmdCortex(goal: string | undefined, flags: Map<string, string | t
       summary: `${entry.provenance ?? "unknown"}${entry.source ? ` · ${entry.source}` : ""} · ${entry.content}`,
     })),
     depth,
+    oneShot: flags.get("no-one-shot") !== true,
     streamOutput: process.env.APOLLO_DESKTOP === "1",
   });
   recording.sink?.close();
@@ -1116,6 +1123,7 @@ function cmdCalibrate(flags: Map<string, string | true>): void {
  * this same localhost UI.
  */
 async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
+  monitorDesktopParent();
   const { config, path: configPath } = loadConfig();
   const models = buildMeasuredRegistry(config).list({ enabledOnly: false });
   const { hub: diagnosticHub, notes: providerNotes } = await buildHub(config);
@@ -1131,7 +1139,7 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     models,
     port,
     runtime: flags.get("read-only") === true ? undefined : runtime,
-    version: "0.2.0-alpha.3",
+    version: "0.2.0-alpha.4",
     diagnostics: {
       providers: diagnosticHub.providers(),
       providerNotes: providerNotes.map((note) => note.replace(/\x1b\[[0-9;]*m/g, "")),
@@ -1154,6 +1162,20 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
   });
+}
+
+function monitorDesktopParent(): void {
+  const parentPid = Number(process.env.APOLLO_PARENT_PID);
+  if (!Number.isSafeInteger(parentPid) || parentPid <= 1) return;
+  const check = () => {
+    try {
+      process.kill(parentPid, 0);
+    } catch {
+      process.exit(0);
+    }
+  };
+  check();
+  setInterval(check, 1_000);
 }
 
 async function cmdBenchmark(flags: Map<string, string | true>): Promise<void> {
@@ -1699,6 +1721,7 @@ ${bold("commands")}
              --mcp bridges your Midas tools; --workspace <dir> adds file+shell tools (--yes to allow)
   cortex     adaptive runtime (instant→agent→deep), phases autorouted:
              apollo cortex "<goal>" [--depth auto|instant|agent|deep] [--budget USD] [--max-turns N] [--mcp]
+             --no-one-shot skips harness preflight and starts directly in the tool loop
              --workspace <dir> lets it write files & run commands (needs --yes for destructive tools)
              --check "file_exists:p ; command_succeeds:cmd" — harness-enforced ground-truth checks
   runs       list recorded runs with their outcomes

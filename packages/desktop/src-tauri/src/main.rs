@@ -16,6 +16,10 @@ fn start_runtime(resource_dir: PathBuf, state_dir: PathBuf) -> Result<Child, Str
         .args(["dashboard", "--port", "4317"])
         .current_dir(workspace)
         .env("APOLLO_STATE_DIR", state_dir)
+        // The embedded runtime also watches this pid. If Desktop is killed in
+        // a way that skips Tauri's window cleanup, Node exits instead of
+        // orphaning an old runtime on the fixed dashboard port.
+        .env("APOLLO_PARENT_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())

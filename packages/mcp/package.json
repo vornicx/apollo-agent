@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-mcp",
-  "version": "0.2.0-alpha.3",
+  "version": "0.2.0-alpha.4",
   "private": true,
   "description": "Stdio MCP client transport for Apollo — connects the Midas memory port (and future MCP tools) to real servers.",
   "type": "module",

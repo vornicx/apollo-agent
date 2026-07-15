@@ -38,15 +38,25 @@ export interface ApplyResult {
  */
 export function applyFileBlocks(workspace: string, blocks: FileBlock[]): ApplyResult {
   const root = resolve(workspace);
-  const written: string[] = [];
+  const targets: Array<{ target: string; rel: string; content: string }> = [];
+  const seen = new Set<string>();
   for (const block of blocks) {
     const target = resolve(root, block.path);
     const rel = relative(root, target);
     if (rel === "" || rel.startsWith("..") || rel.startsWith(sep) || resolve(root, rel) !== target) {
       throw new Error(`refusing to write outside the workspace: "${block.path}"`);
     }
+    if (seen.has(rel)) throw new Error(`refusing duplicate file block: "${block.path}"`);
+    seen.add(rel);
+    targets.push({ target, rel, content: block.content });
+  }
+  // Validate every model-provided path before the first mutation so a bad
+  // later block cannot leave a partially applied response.
+  const written: string[] = [];
+  for (const item of targets) {
+    const { target, rel, content } = item;
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, block.content);
+    writeFileSync(target, content);
     written.push(rel);
   }
   return { written };
