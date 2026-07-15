@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-auth",
-  "version": "0.2.0-alpha.5",
+  "version": "0.2.0-alpha.6",
   "private": true,
   "description": "Apollo subscription auth: detect and reuse official CLI logins (Claude Code / ant, Codex, Gemini CLI) so the router can squeeze subscriptions before metered APIs.",
   "type": "module",

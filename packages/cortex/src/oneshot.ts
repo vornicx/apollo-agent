@@ -41,6 +41,13 @@ interface SnapshotCache {
 /** Infer one conventional, deterministic verifier from project metadata. */
 export function inferOneShotChecks(workspace: string, goal: string): Check[] {
   const root = resolve(workspace);
+  // Commands the user named verbatim are both intent and authority signals;
+  // keep the accepted set static so natural-language goals cannot smuggle an
+  // arbitrary shell expression into preflight.
+  if (/\bnode\s+--test\b/iu.test(goal)) return [{ type: "command_succeeds", command: "node --test" }];
+  if (/\bcargo\s+test\b/iu.test(goal)) return [{ type: "command_succeeds", command: "cargo test" }];
+  if (/\bgo\s+test\s+\.\/\.\.\.(?:\s|$)/iu.test(goal)) return [{ type: "command_succeeds", command: "go test ./..." }];
+  if (/\bpytest(?:\s+-q)?\b/iu.test(goal)) return [{ type: "command_succeeds", command: /\bpytest\s+-q\b/iu.test(goal) ? "pytest -q" : "pytest" }];
   const packagePath = join(root, "package.json");
   if (existsSync(packagePath)) {
     try {

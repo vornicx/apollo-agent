@@ -37,6 +37,10 @@ Measured on 2026-07-15 in this checkout:
 - Snapshot reuse is verified deterministically by tests that observe unchanged, changed and deleted
   files. Benchmark repetitions deliberately use isolated workspaces, so their reuse metric is 0%.
 
+Alpha.6 adds the natural-goal verifier gate discovered by the installed Desktop smoke: the exact
+goal `Fix add.js so node --test passes.` now infers and runs that baseline without an explicit
+Dashboard check field, completes in one verified call, and measured 2.2 s in the release checkout.
+
 The initial regression gate is structural: an exact greeting must select `instant`, perform zero
 provider calls, and still record one local execution; an ordinary task must select `agent` without planner/critic/verifier calls; forced
 `deep` must preserve the complete cognitive cycle. Release evidence should add live TTFT and total

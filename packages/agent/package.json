@@ -1,6 +1,6 @@
 {
   "name": "@archic/apollo-agent",
-  "version": "0.2.0-alpha.5",
+  "version": "0.2.0-alpha.6",
   "private": true,
   "description": "Apollo agentic loop: tool registry + the complete→call-tools→feed-results loop, and schema-constrained structured output, over the provider port.",
   "type": "module",

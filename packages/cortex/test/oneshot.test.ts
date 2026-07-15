@@ -40,6 +40,9 @@ describe("one-shot harness context", () => {
     expect(inferOneShotChecks(workspace, "Fix the TypeScript types")).toEqual([
       { type: "command_succeeds", command: "npm run typecheck" },
     ]);
+    expect(inferOneShotChecks(workspace, "Fix add.js so node --test passes")).toEqual([
+      { type: "command_succeeds", command: "node --test" },
+    ]);
   });
 
   it("reuses unchanged snapshot content and refreshes only changed files", async () => {

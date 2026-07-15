@@ -2,6 +2,12 @@
 
 All notable changes to Apollo are recorded here. Versions follow Semantic Versioning; alpha releases may still change internal contracts, while persisted mission contracts remain explicitly versioned.
 
+## 0.2.0-alpha.6 — 2026-07-15
+
+### Fixed
+
+- Natural workspace goals that explicitly name `node --test`, `cargo test`, `go test ./...`, or `pytest` now infer that static deterministic check even when the project manifest has no matching script. This prevents Desktop one-shots from asking for checks the user already supplied.
+
 ## 0.2.0-alpha.5 — 2026-07-15
 
 ### Added

@@ -1142,7 +1142,7 @@ async function cmdDashboard(flags: Map<string, string | true>): Promise<void> {
     models,
     port,
     runtime: flags.get("read-only") === true ? undefined : runtime,
-    version: "0.2.0-alpha.5",
+    version: "0.2.0-alpha.6",
     diagnostics: {
       providers: diagnosticHub.providers(),
       providerNotes: providerNotes.map((note) => note.replace(/\x1b\[[0-9;]*m/g, "")),
